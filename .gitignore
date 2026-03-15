@@ -1,0 +1,19 @@
+# User configuration
+.env
+
+# Workspaces (created by user/run.sh)
+workspaces/
+
+# Claude internal files
+.claude/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~

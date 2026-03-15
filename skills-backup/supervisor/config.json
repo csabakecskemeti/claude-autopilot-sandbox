@@ -1,0 +1,21 @@
+{
+  "context": {
+    "max_context_tokens": 800000,
+    "warn_threshold_percent": 60,
+    "compact_threshold_percent": 75,
+    "session_file_warn_kb": 500,
+    "session_file_compact_kb": 800
+  },
+  "check_interval_minutes": 15,
+  "auto_compact": true,
+  "auto_continue": true,
+  "verification": {
+    "run_syntax_check": true,
+    "run_tests_if_available": true
+  },
+  "notifications": {
+    "on_stuck": true,
+    "on_complete": true,
+    "on_compact": true
+  }
+}

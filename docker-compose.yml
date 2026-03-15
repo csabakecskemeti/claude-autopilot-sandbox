@@ -1,0 +1,41 @@
+services:
+  claude-local:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - LLM_MODEL=${LLM_MODEL:-nvidia.nvidia-nemotron-3-super-120b-a12b}
+    container_name: claude-local-llm
+
+    # Use host network to access local LLM
+    network_mode: "host"
+
+    # Environment variables for local LLM
+    environment:
+      - ANTHROPIC_BASE_URL=http://${LLM_HOST:-192.168.7.103}:${LLM_PORT:-11234}
+      - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      - WHOOGLE_URL=${WHOOGLE_URL:-}
+      # Vision model config (uses same backend as LLM)
+      - VISION_API_URL=http://${LLM_HOST:-192.168.7.103}:${LLM_PORT:-11234}
+      - VISION_API_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
+      - HOME=/home/claude
+      - TERM=xterm-256color
+
+    # Volume mounts - only workspace, no config mounts
+    volumes:
+      # Main workspace - use WORKSPACE_PATH env var for custom location
+      # Set WORKSPACE_BASE in .env to use internal drive (avoid exFAT issues)
+      - ${WORKSPACE_PATH:-./workspaces/default}:/home/claude/workspace
+
+    # Keep container running for interactive use
+    stdin_open: true
+    tty: true
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-16G}
+        reservations:
+          memory: ${MEMORY_RESERVATION:-2G}
