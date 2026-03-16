@@ -46,4 +46,5 @@ echo ""
 
 # Export for docker-compose
 export WORKSPACE_PATH
-WORKSPACE_PATH="$WORKSPACE_PATH" docker compose run --rm claude-local
+# --service-ports: publish ports defined in docker-compose.yml
+WORKSPACE_PATH="$WORKSPACE_PATH" docker compose run --rm --service-ports claude-local

@@ -113,11 +113,24 @@ ollama pull llama3.3:70b
 ./run.sh my-project
 ./run.sh client-work
 
-# Direct docker-compose
-WORKSPACE_NAME=myproject docker compose run --rm claude-local
+# Direct docker-compose (with port access)
+WORKSPACE_NAME=myproject docker compose run --rm --service-ports claude-local
 ```
 
 Each workspace is isolated in `./workspaces/<name>/` and mapped to `/home/claude/workspace` in the container.
+
+### Accessing Web Apps from Host
+
+When the agent runs a web server inside the container, you can access it from your browser. **Ports are mapped with a +20000 offset** to avoid conflicts:
+
+| Agent says | Access from host |
+|------------|------------------|
+| `http://localhost:3000` | `http://localhost:23000` |
+| `http://localhost:5000` | `http://localhost:25000` |
+| `http://localhost:8000` | `http://localhost:28000` |
+| `http://localhost:8080` | `http://localhost:28080` |
+
+**Rule of thumb:** Add 20000 to any port the agent mentions.
 
 ### Autonomous Operation
 
@@ -331,6 +344,14 @@ docker compose run --rm --entrypoint /bin/bash claude-local
 # Check environment
 env | grep -E 'ANTHROPIC|LLM|VISION'
 ```
+
+### Cannot access web app from browser
+
+If the agent starts a web server but you can't access it from your Mac:
+
+1. **Add 20000 to the port** - Agent says `localhost:5000`, use `localhost:25000`
+2. **Restart container** - Port mappings only apply on fresh start
+3. **Check server binding** - Server must bind to `0.0.0.0`, not `127.0.0.1`
 
 ### Out of memory
 

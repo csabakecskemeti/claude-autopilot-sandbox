@@ -9,11 +9,12 @@ services:
 
     # Port mappings - expose common development ports to host
     # This allows accessing apps running in the container from your browser
+    # Uses 2xxxx range to avoid conflicts with other services
     ports:
-      - "3000:3000"   # Node.js/React
-      - "5000:5000"   # Flask
-      - "8000:8000"   # Django/FastAPI
-      - "8080:8080"   # General web
+      - "23000:3000"   # Node.js/React
+      - "25000:5000"   # Flask
+      - "28000:8000"   # Django/FastAPI
+      - "28080:8080"   # General web
 
     # Environment variables for local LLM
     environment:

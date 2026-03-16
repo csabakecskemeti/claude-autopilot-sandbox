@@ -105,6 +105,14 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 
 Do NOT bind to `127.0.0.1` or `localhost` - this prevents access from outside the container.
 
+**Port mappings (container → host):**
+| Container | Host | Use for |
+|-----------|------|---------|
+| 3000 | 23000 | Node.js/React |
+| 5000 | 25000 | Flask |
+| 8000 | 28000 | Django/FastAPI |
+| 8080 | 28080 | General web |
+
 ## Available Skills
 
 | Skill | Usage |
