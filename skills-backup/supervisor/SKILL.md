@@ -1,6 +1,6 @@
 ---
 name: supervisor
-description: Simple progress supervisor. Checks todo status and decides whether to continue or stop. Call at the end of every turn to maintain autonomous operation.
+description: Simple progress supervisor. Checks task status using /tasks skill and decides whether to continue or stop. Call at the end of every turn to maintain autonomous operation.
 allowed-tools: Bash, Read
 ---
 
@@ -10,11 +10,19 @@ Simple progress check and continuation decision. Call `/supervisor` at the end o
 
 ## When Invoked
 
-### Step 1: Check Todo Status
+### Step 1: Check Task Status
 
-Review current todos:
+Check current tasks using the tasks skill:
+
+```bash
+~/.claude/skills/tasks/tasks.sh status
+~/.claude/skills/tasks/tasks.sh list
+```
+
+Review the output:
 - How many complete vs pending?
 - Is there active work in progress?
+- Are any tasks stuck?
 
 ### Step 2: Verify Current Work
 
@@ -52,32 +60,38 @@ Continue working. Do NOT stop.
 ===========================================================
 ```
 
-**If tests PASS and todos remain:**
+**If tests PASS and tasks remain:**
 ```
 ===========================================================
 [OK] SUPERVISOR: PROGRESS OK - CONTINUE
 ===========================================================
 
-Completed: X of Y todos
+Completed: X of Y tasks
 Tests: PASSING
 
-INSTRUCTION: Continue with next todo:
-- [next pending todo]
+INSTRUCTION: Continue with next task:
+- [next pending task]
+
+Mark current task as working:
+~/.claude/skills/tasks/tasks.sh working <number>
 
 Keep working. Do NOT stop.
 ===========================================================
 ```
 
-**If ALL todos complete and tests pass:**
+**If ALL tasks complete and tests pass:**
 ```
 ===========================================================
 [DONE] SUPERVISOR: ALL COMPLETE
 ===========================================================
 
-All todos completed. Tests passing.
+All tasks completed. Tests passing.
 
 Summary:
 - [what was built]
+
+Clear tasks for next session:
+~/.claude/skills/tasks/tasks.sh clear
 
 Waiting for user review or new task.
 ===========================================================
@@ -86,6 +100,7 @@ Waiting for user review or new task.
 ## Critical Rules
 
 1. **Be honest** - If tests fail, say so
-2. **Keep it simple** - Just check todos and tests
+2. **Keep it simple** - Just check tasks and tests
 3. **Always give clear instruction** - Tell agent exactly what to do next
-4. **Only stop when truly done** - All todos complete AND tests pass
+4. **Only stop when truly done** - All tasks complete AND tests pass
+5. **Track with /tasks** - Always use the tasks skill, not built-in todos

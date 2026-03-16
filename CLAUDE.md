@@ -33,17 +33,23 @@ sleep 2
 
 ### 1. Receive Task
 When you receive a task:
-1. Break it into clear todos
-2. Start working on the first todo
-3. Mark todos complete as you finish them
+1. Break it into clear tasks using `/tasks`:
+   ```bash
+   ~/.claude/skills/tasks/tasks.sh add "First step"
+   ~/.claude/skills/tasks/tasks.sh add "Second step"
+   ~/.claude/skills/tasks/tasks.sh add "Third step"
+   ```
+2. Mark current task as in-progress
+3. Start working
 
 ### 2. Work Loop
-For each todo:
-1. Implement the feature or fix
-2. Verify it works (run tests, check syntax)
-3. **For UI work: use /vision to verify visually**
-4. Mark todo complete
-5. Move to next todo
+For each task:
+1. Mark it as working: `~/.claude/skills/tasks/tasks.sh working <number>`
+2. Implement the feature or fix
+3. Verify it works (run tests, check syntax)
+4. **For UI work: use /vision to verify visually**
+5. Mark task complete: `~/.claude/skills/tasks/tasks.sh done <number>`
+6. Move to next task
 
 ### 3. Call /supervisor
 At the end of each turn, call `/supervisor` to:
@@ -66,7 +72,7 @@ The supervisor will tell you to either:
 
 ## Verification
 
-Before marking a todo complete:
+Before marking a task complete:
 
 ```bash
 # Check Python syntax
@@ -76,13 +82,38 @@ python3 -m py_compile *.py
 python3 -m pytest -v
 
 # For web apps - VERIFY VISUALLY:
-~/.claude/skills/vision/vision.sh screenshot "http://localhost:5000" "Describe this page"
+~/.claude/skills/vision/vision.sh verify "http://localhost:5000" "Describe this page"
 ```
+
+## Web Server Binding
+
+**IMPORTANT:** When running web servers, always bind to `0.0.0.0` so the app is accessible from the host machine:
+
+```bash
+# Python http.server
+python3 -m http.server 8000 --bind 0.0.0.0
+
+# Flask
+app.run(host='0.0.0.0', port=5000)
+
+# Node.js/Express
+app.listen(3000, '0.0.0.0')
+
+# FastAPI/Uvicorn
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Do NOT bind to `127.0.0.1` or `localhost` - this prevents access from outside the container.
 
 ## Available Skills
 
 | Skill | Usage |
 |-------|-------|
+| `/tasks add <description>` | Add a new task |
+| `/tasks list` | Show all tasks with status |
+| `/tasks working <number>` | Mark task as in-progress |
+| `/tasks done <number>` | Mark task as completed |
+| `/tasks status` | Show summary (X of Y complete) |
 | `/vision analyze <image_or_url> <prompt>` | Analyze image file OR screenshot URL |
 | `/vision verify <image_or_url> <expected>` | Verify image/UI matches description |
 | `/vision ocr <image_or_url>` | Extract text from image |
@@ -111,7 +142,8 @@ If something fails:
 
 ## Rules
 
-1. **Keep working** - Don't stop until all todos complete
-2. **Verify everything** - Run tests AND use vision for UI
-3. **Call /supervisor** - At the end of every turn
-4. **Be honest** - If tests fail or UI looks wrong, fix it first
+1. **Track tasks** - Use `/tasks` to add, track, and complete tasks
+2. **Keep working** - Don't stop until all tasks complete
+3. **Verify everything** - Run tests AND use vision for UI
+4. **Call /supervisor** - At the end of every turn
+5. **Be honest** - If tests fail or UI looks wrong, fix it first

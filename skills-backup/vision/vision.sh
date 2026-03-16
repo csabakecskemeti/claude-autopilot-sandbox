@@ -170,34 +170,31 @@ call_vision_api() {
     local image_base64="$1"
     local prompt="$2"
 
+    # Escape prompt for JSON (handle newlines, quotes, backslashes)
+    local escaped_prompt=$(printf '%s' "$prompt" | jq -Rs .)
+
+    # Build JSON payload using jq for proper escaping
+    local payload=$(jq -n \
+        --arg model "$VISION_MODEL" \
+        --argjson prompt "$escaped_prompt" \
+        --arg image_data "data:image/png;base64,${image_base64}" \
+        '{
+            model: $model,
+            messages: [{
+                role: "user",
+                content: [
+                    { type: "text", text: $prompt },
+                    { type: "image_url", image_url: { url: $image_data } }
+                ]
+            }],
+            temperature: 0.1,
+            max_tokens: 2048
+        }')
+
     local response=$(curl -s -X POST "${VISION_API_URL}/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${VISION_API_TOKEN}" \
-        -d "$(cat <<EOF
-{
-  "model": "${VISION_MODEL}",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "text",
-          "text": "${prompt}"
-        },
-        {
-          "type": "image_url",
-          "image_url": {
-            "url": "data:image/png;base64,${image_base64}"
-          }
-        }
-      ]
-    }
-  ],
-  "temperature": 0.1,
-  "max_tokens": 500
-}
-EOF
-)")
+        -d "$payload")
 
     # Extract content from response
     echo "$response" | jq -r '.choices[0].message.content // .error.message // "Error: Could not parse response"'

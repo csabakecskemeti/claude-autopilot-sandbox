@@ -7,8 +7,13 @@ services:
         - LLM_MODEL=${LLM_MODEL:-nvidia.nvidia-nemotron-3-super-120b-a12b}
     container_name: claude-local-llm
 
-    # Use host network to access local LLM
-    network_mode: "host"
+    # Port mappings - expose common development ports to host
+    # This allows accessing apps running in the container from your browser
+    ports:
+      - "3000:3000"   # Node.js/React
+      - "5000:5000"   # Flask
+      - "8000:8000"   # Django/FastAPI
+      - "8080:8080"   # General web
 
     # Environment variables for local LLM
     environment:
