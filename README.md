@@ -70,6 +70,13 @@ VISION_MODEL=qwen/qwen3-vl-4b
 # Whoogle Search (optional)
 WHOOGLE_URL=http://your-whoogle:5000
 
+# Langfuse Tracing (optional - for agent evaluation)
+TRACE_TO_LANGFUSE=true
+LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+LANGFUSE_SECRET_KEY=sk-lf-xxx
+LANGFUSE_HOST=http://host.docker.internal:3000
+LANGFUSE_PROJECT=claude-autopilot-sandbox
+
 # Resource Limits
 MEMORY_LIMIT=16G
 MEMORY_RESERVATION=2G
@@ -185,6 +192,8 @@ Skills are invoked with `/skillname` syntax:
 
 | Skill | Usage | Description |
 |-------|-------|-------------|
+| `/plan` | `/plan` | Create implementation plan (no approval needed) |
+| `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr <image_or_url>` | Image analysis, UI verification, OCR |
 | `/supervisor` | `/supervisor` | Check progress and decide next action |
 | `/websearch` | `/websearch <query>` | Web search via Whoogle |
@@ -205,6 +214,33 @@ Claude can delegate to specialized subagents:
 | `debugger` | Bug investigation and error fixing |
 | `web-search-subagent` | Research tasks using web search |
 | `code-reviewer` | Code quality and security review |
+
+## Tracing with Langfuse
+
+Track and evaluate agent sessions using Langfuse (self-hosted).
+
+### Quick Setup
+
+1. Add to `.env`:
+   ```env
+   TRACE_TO_LANGFUSE=true
+   LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+   LANGFUSE_SECRET_KEY=sk-lf-xxx
+   LANGFUSE_HOST=http://host.docker.internal:3000
+   ```
+
+2. Rebuild: `docker compose build --no-cache`
+
+3. Run a session - traces appear in Langfuse UI
+
+### What Gets Traced
+
+- Every turn (user message → assistant response)
+- LLM calls with token usage
+- Tool calls (Read, Write, Bash, etc.)
+- Grouped by session for conversation view
+
+See [docs/TRACING.md](docs/TRACING.md) for detailed setup and debugging.
 
 ## The Supervisor System
 
@@ -405,11 +441,19 @@ claude-autopilot-sandbox/
 ├── USER_MANUAL.md         # User documentation
 ├── CLAUDE.md              # Template copied to new workspaces
 ├── LM_STUDIO_SETUP.md     # Guide for setting up LM Studio
+├── docs/                  # Additional documentation
+│   └── TRACING.md         # Langfuse tracing setup guide
+├── scripts/               # Runtime scripts
+│   └── init-workspace.sh  # Workspace initialization (runs at startup)
+├── hooks-backup/          # Hooks (copied into image)
+│   └── stop_hook.sh       # Langfuse tracing hook
 ├── skills-backup/         # Skills (copied into image)
-│   ├── vision/
-│   ├── supervisor/
-│   ├── websearch/
-│   ├── memory/
+│   ├── plan/              # Implementation planning
+│   ├── tasks/             # Task tracking
+│   ├── vision/            # Image/screenshot analysis
+│   ├── supervisor/        # Progress checking
+│   ├── websearch/         # Web search
+│   ├── memory/            # Persistent memory
 │   └── ...
 └── agents-backup/         # Subagents (copied into image)
     ├── debugger.md

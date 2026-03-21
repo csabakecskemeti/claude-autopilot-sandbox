@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - LLM_MODEL=${LLM_MODEL:-nvidia.nvidia-nemotron-3-super-120b-a12b}
+        - LLM_MODEL=${LLM_MODEL:?Set LLM_MODEL in .env}
     container_name: claude-local-llm
 
     # Port mappings - expose common development ports to host
@@ -18,15 +18,22 @@ services:
 
     # Environment variables for local LLM
     environment:
-      - ANTHROPIC_BASE_URL=http://${LLM_HOST:-192.168.7.103}:${LLM_PORT:-11234}
+      - ANTHROPIC_BASE_URL=http://${LLM_HOST:?Set LLM_HOST in .env}:${LLM_PORT:-11234}
       - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
       - WHOOGLE_URL=${WHOOGLE_URL:-}
       # Vision model config (uses same backend as LLM)
-      - VISION_API_URL=http://${LLM_HOST:-192.168.7.103}:${LLM_PORT:-11234}
+      - VISION_API_URL=http://${LLM_HOST}:${LLM_PORT:-11234}
       - VISION_API_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
       - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
       - HOME=/home/claude
       - TERM=xterm-256color
+      # Tracing (Langfuse) - set TRACE_TO_LANGFUSE=true in .env to enable
+      - TRACE_TO_LANGFUSE=${TRACE_TO_LANGFUSE:-false}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
+      - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
+      - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
 
     # Volume mounts - only workspace, no config mounts
     volumes:

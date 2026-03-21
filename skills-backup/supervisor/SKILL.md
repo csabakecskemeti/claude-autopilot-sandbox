@@ -24,26 +24,36 @@ Review the output:
 - Is there active work in progress?
 - Are any tasks stuck?
 
-### Step 2: Verify Current Work
+### Step 2: Test the Solution
 
-Run a quick verification:
+1. Recall the **original user request** - what did they ask for?
+2. Verify the completed work **actually meets that intent**
+3. Run/test/check the output to confirm it works
+
+Ask yourself: "If I were the user, would I be satisfied with this result?"
+
+### Step 3: Add Tasks if Issues Found
+
+If verification reveals problems, add new tasks:
 
 ```bash
-# Check for syntax errors in Python files
-find ~/workspace -name "*.py" -exec python3 -m py_compile {} \; 2>&1 | head -10
-
-# Run tests if they exist
-python3 -m pytest -v 2>&1 | tail -20 || echo "No pytest tests found"
-
-# Or run a main file
-timeout 5 python3 ~/workspace/main.py 2>&1 | head -20 || echo "No main.py or timeout"
+~/.claude/skills/tasks/tasks.sh add "Fix: [specific issue found]"
+~/.claude/skills/tasks/tasks.sh add "Fix: [another issue]"
 ```
 
-### Step 3: Decide Action
+Then instruct agent to continue working on the new tasks.
+
+### Step 4: Decide Action
 
 Based on verification results:
 
 **If tests FAIL or errors exist:**
+```bash
+# Add tasks for each issue found
+~/.claude/skills/tasks/tasks.sh add "Fix: [specific error]"
+```
+
+Then output:
 ```
 ===========================================================
 [!] SUPERVISOR: ERRORS FOUND - CONTINUE FIXING
@@ -52,9 +62,10 @@ Based on verification results:
 Errors found:
 - [list errors]
 
-INSTRUCTION: Fix these errors now:
-1. [specific fix]
-2. [specific fix]
+Added new tasks for fixes. Current status:
+[output of tasks.sh status]
+
+INSTRUCTION: Fix these errors now. Start with task 1.
 
 Continue working. Do NOT stop.
 ===========================================================
