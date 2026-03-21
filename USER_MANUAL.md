@@ -82,11 +82,13 @@ Skills are invoked with `/skillname` syntax:
 
 | Skill | Usage | Description |
 |-------|-------|-------------|
+| `/plan` | `/plan` | Create implementation plan (no approval needed) |
+| `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr` | Image analysis and UI verification |
+| `/supervisor` | `/supervisor` | Evaluate progress and continue |
 | `/websearch` | `/websearch query` | Web search via Whoogle |
 | `/memory` | `/memory store/recall` | Persistent memory across sessions |
 | `/notes` | `/notes add/list` | Note-taking system |
-| `/supervisor` | `/supervisor` | Evaluate progress and continue |
 | `/pkg-install` | `/pkg-install apt/pip pkg` | Install packages at runtime |
 | `/code-runner` | `/code-runner python 'code'` | Execute code snippets |
 | `/file-convert` | `/file-convert pdf2txt in out` | Convert between formats |
@@ -207,3 +209,67 @@ All tests pass. UI verified with vision. Calling supervisor for final evaluation
 
 [Supervisor confirms completion]
 ```
+
+## Tracing with Langfuse
+
+Track and evaluate agent sessions using Langfuse. This helps you understand agent behavior, debug issues, and measure performance.
+
+### Setup
+
+1. Add Langfuse credentials to `.env`:
+   ```env
+   TRACE_TO_LANGFUSE=true
+   LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+   LANGFUSE_SECRET_KEY=sk-lf-xxx
+   LANGFUSE_HOST=http://host.docker.internal:3000
+   ```
+
+2. Rebuild and run: `docker compose build && ./run.sh`
+
+### Example: Todo App Task
+
+Here's an example of tracing a simple task: "write a simple web based todo app"
+
+**User Prompt:**
+
+![User prompt for todo app task](assets/example-todo-app/user-prompt.png)
+
+**Traces in Langfuse:**
+
+All turns from the session are captured as individual traces, grouped by session ID:
+
+![Traces overview in Langfuse](assets/example-todo-app/traces.png)
+
+**Final Turn Details:**
+
+Each trace shows the input (user message or skill invocation), output (Claude's response), and tool calls as spans:
+
+![Final turn trace details](assets/example-todo-app/final-turns-trace.png)
+
+**Produced Solution:**
+
+The agent autonomously created a complete todo app:
+
+![Completed todo app solution](assets/example-todo-app/produced-solution.png)
+
+### What Gets Traced
+
+| Component | Description |
+|-----------|-------------|
+| **Trace** | One per turn (user message → assistant response) |
+| **Generation** | LLM call with input, output, and token usage |
+| **Spans** | Tool calls (Read, Write, Bash, Skill, etc.) |
+| **Session** | Groups all turns from one conversation |
+
+### Debugging Tips
+
+```bash
+# Check if hooks are firing
+docker exec $(docker ps -q -f name=claude) cat ~/.claude/state/hook.log
+
+# View recent traces via API
+curl -s -H "Authorization: Basic $(echo -n 'pk:sk' | base64)" \
+  "http://localhost:3000/api/public/traces?limit=5" | jq '.data[].name'
+```
+
+See [docs/TRACING.md](docs/TRACING.md) for detailed setup and troubleshooting.

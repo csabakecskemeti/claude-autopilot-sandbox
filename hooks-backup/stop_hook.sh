@@ -146,13 +146,22 @@ extract_text() {
 
     # Handle string content
     if echo "$content" | jq -e 'type == "string"' > /dev/null 2>&1; then
-        echo "$content" | jq -r '.'
+        local text
+        text=$(echo "$content" | jq -r '.')
+        # Skip if whitespace-only
+        if [ -n "$(echo "$text" | tr -d '[:space:]')" ]; then
+            echo "$text"
+        fi
         return
     fi
 
-    # Handle array content - extract text blocks
+    # Handle array content - extract text blocks, filtering out whitespace-only
     if echo "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
-        echo "$content" | jq -r '[.[] | select(type == "object" and .type == "text") | .text] | join("\n")'
+        echo "$content" | jq -r '
+            [.[] | select(type == "object" and .type == "text") | .text] |
+            map(select(. | gsub("\\s"; "") | length > 0)) |
+            join("\n")
+        '
         return
     fi
 
@@ -291,84 +300,117 @@ create_trace() {
     batch=$(echo "$batch" | jq --argjson evt "$trace_event" '. += [$evt]')
     debug "batch after trace_event - length: $(echo "$batch" | jq 'length' 2>/dev/null || echo 'INVALID')"
 
-    # Process each assistant message (each represents one LLM generation)
-    local gen_num=0
+    # Aggregate all assistant messages into ONE generation per turn
     local all_output=""
+    local total_input_tokens=0
+    local total_output_tokens=0
+    local model_name="unknown"
+    local first_timestamp="$now"
+    local last_timestamp="$now"
+    local msg_count=0
+
     debug "Processing assistant_messages - count: $(echo "$assistant_messages" | jq 'length' 2>/dev/null || echo 'unknown')"
 
+    # First pass: collect all text and aggregate tokens
+    while IFS= read -r assistant_msg; do
+        msg_count=$((msg_count + 1))
+
+        # Get timestamp (use first message's timestamp as start)
+        local msg_timestamp
+        msg_timestamp=$(echo "$assistant_msg" | jq -r '.timestamp // ""' 2>/dev/null)
+        if [ -n "$msg_timestamp" ]; then
+            if [ "$msg_count" -eq 1 ]; then
+                first_timestamp="$msg_timestamp"
+            fi
+            last_timestamp="$msg_timestamp"
+        fi
+
+        # Extract text (filtering whitespace-only)
+        local assistant_text
+        assistant_text=$(extract_text "$assistant_msg")
+        if [ -n "$assistant_text" ]; then
+            all_output="${all_output}${assistant_text}\n"
+        fi
+
+        # Get model name (use first non-unknown)
+        local msg_model
+        msg_model=$(echo "$assistant_msg" | jq -r 'if type == "object" and has("message") then .message.model // "unknown" else "unknown" end' 2>/dev/null)
+        if [ "$msg_model" != "unknown" ] && [ "$model_name" = "unknown" ]; then
+            model_name="$msg_model"
+        fi
+
+        # Aggregate token usage
+        local usage
+        usage=$(get_usage "$assistant_msg")
+        if [ "$usage" != "null" ] && [ -n "$usage" ]; then
+            local in_tok out_tok
+            in_tok=$(echo "$usage" | jq -r '.input_tokens // 0')
+            out_tok=$(echo "$usage" | jq -r '.output_tokens // 0')
+            total_input_tokens=$((total_input_tokens + in_tok))
+            total_output_tokens=$((total_output_tokens + out_tok))
+        fi
+    done < <(echo "$assistant_messages" | jq -c '.[]')
+
+    debug "Aggregated: output_len=${#all_output}, input_tokens=$total_input_tokens, output_tokens=$total_output_tokens, model=$model_name"
+
+    # Create ONE generation event for the entire turn
+    local gen_id
+    gen_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    local gen_event_id
+    gen_event_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+
+    # Clean up output (remove trailing \n)
+    all_output=$(echo -e "$all_output" | sed 's/\\n$//')
+
+    local gen_event
+    gen_event=$(jq -n \
+        --arg event_id "$gen_event_id" \
+        --arg id "$gen_id" \
+        --arg trace_id "$trace_id" \
+        --arg name "LLM Response" \
+        --arg model "$model_name" \
+        --arg input "$user_text" \
+        --arg output "$all_output" \
+        --arg start_time "$first_timestamp" \
+        --arg end_time "$last_timestamp" \
+        --argjson input_tokens "$total_input_tokens" \
+        --argjson output_tokens "$total_output_tokens" \
+        '{
+            id: $event_id,
+            type: "generation-create",
+            timestamp: $end_time,
+            body: {
+                id: $id,
+                traceId: $trace_id,
+                name: $name,
+                model: $model,
+                input: $input,
+                output: $output,
+                startTime: $start_time,
+                endTime: $end_time,
+                usage: {
+                    input: $input_tokens,
+                    output: $output_tokens
+                },
+                metadata: {
+                    source: "claude-code",
+                    message_count: $msg_count
+                }
+            }
+        }' --argjson msg_count "$msg_count")
+    batch=$(echo "$batch" | jq --argjson evt "$gen_event" '. += [$evt]')
+    debug "batch after gen_event - valid: $(echo "$batch" | jq -e '.' >/dev/null 2>&1 && echo 'yes' || echo 'no')"
+
+    # Second pass: collect tool uses as spans
+    local gen_num=0
     while IFS= read -r assistant_msg; do
         gen_num=$((gen_num + 1))
-        debug "Processing generation $gen_num - msg length: ${#assistant_msg}"
-
-        local gen_id
-        gen_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
         local msg_timestamp
         msg_timestamp=$(echo "$assistant_msg" | jq -r '.timestamp // ""' 2>/dev/null)
         if [ -z "$msg_timestamp" ]; then
             msg_timestamp="$now"
         fi
-        debug "gen $gen_num timestamp: $msg_timestamp"
-
-        local assistant_text
-        assistant_text=$(extract_text "$assistant_msg")
-        debug "gen $gen_num text length: ${#assistant_text}"
-        all_output="${all_output}${assistant_text}\n"
-
-        # Get model name
-        local model_name
-        model_name=$(echo "$assistant_msg" | jq -r 'if type == "object" and has("message") then .message.model // "unknown" else "unknown" end' 2>/dev/null)
-        debug "gen $gen_num model: $model_name"
-
-        # Get usage
-        local usage
-        usage=$(get_usage "$assistant_msg")
-        local input_tokens=0
-        local output_tokens=0
-        if [ "$usage" != "null" ] && [ -n "$usage" ]; then
-            input_tokens=$(echo "$usage" | jq -r '.input_tokens // 0')
-            output_tokens=$(echo "$usage" | jq -r '.output_tokens // 0')
-        fi
-
-        # Create generation event
-        local gen_event_id
-        gen_event_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
-        local gen_event
-        gen_event=$(jq -n \
-            --arg event_id "$gen_event_id" \
-            --arg id "$gen_id" \
-            --arg trace_id "$trace_id" \
-            --arg name "LLM Call $gen_num" \
-            --arg model "$model_name" \
-            --arg input "$user_text" \
-            --arg output "$assistant_text" \
-            --arg time "$msg_timestamp" \
-            --argjson input_tokens "$input_tokens" \
-            --argjson output_tokens "$output_tokens" \
-            '{
-                id: $event_id,
-                type: "generation-create",
-                timestamp: $time,
-                body: {
-                    id: $id,
-                    traceId: $trace_id,
-                    name: $name,
-                    model: $model,
-                    input: $input,
-                    output: $output,
-                    startTime: $time,
-                    endTime: $time,
-                    usage: {
-                        input: $input_tokens,
-                        output: $output_tokens
-                    },
-                    metadata: {
-                        source: "claude-code"
-                    }
-                }
-            }')
-        batch=$(echo "$batch" | jq --argjson evt "$gen_event" '. += [$evt]')
-        debug "batch after gen_event $gen_num - valid: $(echo "$batch" | jq -e '.' >/dev/null 2>&1 && echo 'yes' || echo 'no')"
 
         # Process tool uses
         local tool_uses
