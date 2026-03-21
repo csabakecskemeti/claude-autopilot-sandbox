@@ -1,5 +1,7 @@
 # Claude Autopilot Sandbox
 
+**Version 1.0.0** | [Changelog](CHANGELOG.md)
+
 Run Claude Code CLI autonomously in a Docker sandbox with your own local LLM. 100% local execution with full tool access for long-running, unattended task completion.
 
 ## Features
@@ -430,9 +432,12 @@ This is safe because all changes are isolated to the mounted workspace volume.
 
 ```
 claude-autopilot-sandbox/
+├── VERSION                # Current version (1.0.0)
+├── CHANGELOG.md           # Version history
 ├── .env.example           # Configuration template
 ├── .env                   # Your configuration (gitignored)
 ├── .gitignore
+├── .dockerignore          # Docker build exclusions
 ├── docker-compose.yml     # Service definition
 ├── Dockerfile             # Container build
 ├── run.sh                 # Workspace launcher
@@ -443,10 +448,12 @@ claude-autopilot-sandbox/
 ├── LM_STUDIO_SETUP.md     # Guide for setting up LM Studio
 ├── docs/                  # Additional documentation
 │   └── TRACING.md         # Langfuse tracing setup guide
+├── assets/                # Screenshots and images
+│   └── example-todo-app/  # Example task screenshots
 ├── scripts/               # Runtime scripts
 │   └── init-workspace.sh  # Workspace initialization (runs at startup)
 ├── hooks-backup/          # Hooks (copied into image)
-│   └── stop_hook.sh       # Langfuse tracing hook
+│   └── langfuse_stop_hook.sh  # Langfuse tracing hook
 ├── skills-backup/         # Skills (copied into image)
 │   ├── plan/              # Implementation planning
 │   ├── tasks/             # Task tracking

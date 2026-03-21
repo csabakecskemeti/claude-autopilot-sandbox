@@ -160,6 +160,41 @@ Edit the workspace's `CLAUDE.md` to add project-specific instructions:
 ... (keep the supervisor loop instructions)
 ```
 
+## Tested Models
+
+The following models have been tested and work well with this sandbox:
+
+### Primary LLM
+
+| Model | Context | Notes |
+|-------|---------|-------|
+| `nvidia.nvidia-nemotron-3-super-120b-a12b` | 1M | Excellent for autonomous coding tasks. Good instruction following. |
+
+### Vision Model
+
+| Model | Notes |
+|-------|-------|
+| `qwen/qwen3-vl-4b` | Fast, accurate for UI verification and OCR. |
+
+### Configuration
+
+Set in `.env`:
+```env
+LLM_MODEL=nvidia.nvidia-nemotron-3-super-120b-a12b
+VISION_MODEL=qwen/qwen3-vl-4b
+```
+
+### Model Requirements
+
+For autonomous operation, the LLM should have:
+- **Large context window** - sessions can be long
+- **Good instruction following** - must follow CLAUDE.md instructions
+- **Tool use capability** - needs to call tools correctly
+
+### LM Studio Setup
+
+For detailed LM Studio configuration with these models, see [LM_STUDIO_SETUP.md](LM_STUDIO_SETUP.md).
+
 ## Resource Limits
 
 Default limits in `.env`:

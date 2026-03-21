@@ -24,7 +24,7 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
         "hooks": [
           {
             "type": "command",
-            "command": "${HOME}/.claude/hooks/stop_hook.sh",
+            "command": "${HOME}/.claude/hooks/langfuse_stop_hook.sh",
             "timeout": 60
           }
         ]
@@ -48,8 +48,8 @@ echo "Created ${CLAUDE_DIR}/settings.json with hooks and tracing configuration"
 mkdir -p "${HOME}/.claude/state"
 
 # Verify hook script is executable
-chmod +x "${HOME}/.claude/hooks/stop_hook.sh" 2>/dev/null || true
+chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
 
 echo "Workspace initialization complete"
-echo "Hook script: ${HOME}/.claude/hooks/stop_hook.sh"
+echo "Hook script: ${HOME}/.claude/hooks/langfuse_stop_hook.sh"
 echo "Settings: ${CLAUDE_DIR}/settings.json"

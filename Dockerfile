@@ -116,7 +116,7 @@ RUN echo '{\
   }\
 }' > /home/claude/.claude.json
 
-# Create user-level settings.json for Claude (base config)
+# Create user-level settings.json for Claude (base config only)
 # NOTE: Hooks are configured in PROJECT-LEVEL settings by init-workspace.sh
 # because project-level settings take precedence over user-level
 RUN echo '{\

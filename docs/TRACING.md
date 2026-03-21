@@ -14,9 +14,9 @@ Tracing captures every turn of Claude Code sessions and sends them to Langfuse f
 ```
 Claude Code Session
         ↓
-   Stop Hook fires (after each response)
+   Stop Hook fires (when Claude returns control to user)
         ↓
-   stop_hook.sh reads transcript
+   langfuse_stop_hook.sh reads transcript
         ↓
    Sends trace to Langfuse API
         ↓
@@ -58,7 +58,7 @@ The `init-workspace.sh` script automatically creates `~/workspace/.claude/settin
         "hooks": [
           {
             "type": "command",
-            "command": "/home/claude/.claude/hooks/stop_hook.sh",
+            "command": "/home/claude/.claude/hooks/langfuse_stop_hook.sh",
             "timeout": 60
           }
         ]
@@ -72,16 +72,13 @@ The `init-workspace.sh` script automatically creates `~/workspace/.claude/settin
 }
 ```
 
-**Why project-level?** Claude Code settings have precedence:
-1. Project-level (`.claude/settings.json`) ← **Hooks must be here**
-2. User-level (`~/.claude/settings.json`)
-3. Local (`.claude/settings.local.json`)
+**Important:** Hooks must be in **project-level** settings (`workspace/.claude/settings.json`), NOT user-level.
 
-If hooks are only in user-level settings, they get overridden by any project-level config.
+This is configured automatically by `init-workspace.sh` at container startup.
 
 ### 3. The Stop Hook
 
-Located at `~/.claude/hooks/stop_hook.sh`, this script:
+Located at `~/.claude/hooks/langfuse_stop_hook.sh`, this script:
 
 1. Receives session data via stdin from Claude Code
 2. Reads the transcript file
@@ -156,7 +153,7 @@ Hook isn't being triggered. Check:
 
 2. **Hook script is executable:**
    ```bash
-   docker exec $(docker ps -q -f name=claude) ls -la ~/.claude/hooks/stop_hook.sh
+   docker exec $(docker ps -q -f name=claude) ls -la ~/.claude/hooks/langfuse_stop_hook.sh
    ```
 
 3. **Rebuild container** after changes:
@@ -184,7 +181,7 @@ Common issues:
 docker exec -it $(docker ps -q -f name=claude) bash -c '
 export LANGFUSE_DEBUG=true
 export TRACE_TO_LANGFUSE=true
-echo "{\"session_id\": \"test-123\", \"transcript_path\": \"$HOME/.claude/projects/-home-claude-workspace/$(ls $HOME/.claude/projects/-home-claude-workspace/*.jsonl | head -1 | xargs basename)\"}" | bash ~/.claude/hooks/stop_hook.sh
+echo "{\"session_id\": \"test-123\", \"transcript_path\": \"$HOME/.claude/projects/-home-claude-workspace/$(ls $HOME/.claude/projects/-home-claude-workspace/*.jsonl | head -1 | xargs basename)\"}" | bash ~/.claude/hooks/langfuse_stop_hook.sh
 '
 ```
 
@@ -194,17 +191,18 @@ echo "{\"session_id\": \"test-123\", \"transcript_path\": \"$HOME/.claude/projec
 |------|---------|
 | `.env` | Langfuse credentials (gitignored) |
 | `scripts/init-workspace.sh` | Creates project-level settings at startup |
-| `hooks-backup/stop_hook.sh` | Sends traces to Langfuse |
+| `hooks-backup/langfuse_stop_hook.sh` | Sends traces to Langfuse |
 | `~/.claude/state/hook.log` | Debug log (in container) |
 | `~/.claude/state/langfuse_state.json` | Tracks processed messages |
 
 ## Key Learnings
 
-1. **Settings precedence matters** - Project-level overrides user-level, so hooks MUST be in project-level settings
-2. **Use absolute paths** - `/home/claude/.claude/hooks/stop_hook.sh` not relative paths
-3. **host.docker.internal** - Access host localhost from inside container
-4. **Debug logging** - Set `LANGFUSE_DEBUG=true` to see detailed logs in hook.log
-5. **Hook fires on every turn** - Each Claude response triggers the Stop hook
+1. **Hooks must be in project-level settings** - Configured in `workspace/.claude/settings.json` by init-workspace.sh
+2. **User-level settings for permissions only** - Don't put hooks in `~/.claude/settings.json`
+3. **Use absolute paths** - `/home/claude/.claude/hooks/langfuse_stop_hook.sh` not relative paths
+4. **host.docker.internal** - Access host localhost from inside container
+5. **Debug logging** - Set `LANGFUSE_DEBUG=true` to see detailed logs in hook.log
+6. **Hook fires when Claude stops** - The Stop hook triggers when Claude returns control to the user (waits for input), NOT after every individual response during autonomous work loops
 
 ## References
 
