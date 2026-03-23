@@ -34,8 +34,10 @@ WORKSPACE_PATH="$WORKSPACE_BASE/$WORKSPACE_NAME"
 mkdir -p "$WORKSPACE_PATH"
 
 # Copy CLAUDE.md template if workspace doesn't have it
-if [ ! -f "$WORKSPACE_PATH/CLAUDE.md" ] && [ -f "./CLAUDE.md" ]; then
-    cp "./CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
+# NOTE: Use claude-backup/CLAUDE.md (autonomous agent instructions)
+#       NOT ./CLAUDE.md (project development instructions)
+if [ ! -f "$WORKSPACE_PATH/CLAUDE.md" ] && [ -f "./claude-backup/CLAUDE.md" ]; then
+    cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
     echo "Initialized workspace '$WORKSPACE_NAME' with CLAUDE.md"
 fi
 

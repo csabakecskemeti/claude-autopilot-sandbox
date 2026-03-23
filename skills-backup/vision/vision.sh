@@ -11,6 +11,9 @@ VISION_API_URL="${VISION_API_URL:-http://192.168.7.103:11234}"
 VISION_API_TOKEN="${VISION_API_TOKEN:-lmstudio}"
 VISION_MODEL="${VISION_MODEL:-qwen/qwen3-vl-4b}"
 
+# Debug: Print config on startup
+echo "Vision config: API=$VISION_API_URL MODEL=$VISION_MODEL" >&2
+
 # Directories
 SCREENSHOT_DIR="/tmp/vision_screenshots"
 LOG_DIR="${HOME}/workspace/.vision_logs"
@@ -170,6 +173,10 @@ call_vision_api() {
     local image_base64="$1"
     local prompt="$2"
 
+    # Debug: show what model we're using
+    echo "DEBUG: VISION_MODEL='$VISION_MODEL'" >&2
+    echo "DEBUG: VISION_API_URL='$VISION_API_URL'" >&2
+
     # Escape prompt for JSON (handle newlines, quotes, backslashes)
     local escaped_prompt=$(printf '%s' "$prompt" | jq -Rs .)
 
@@ -190,6 +197,9 @@ call_vision_api() {
             temperature: 0.1,
             max_tokens: 2048
         }')
+
+    # Debug: show payload structure (without the huge base64 image)
+    echo "DEBUG: Payload model field: $(echo "$payload" | jq -r '.model')" >&2
 
     local response=$(curl -s -X POST "${VISION_API_URL}/v1/chat/completions" \
         -H "Content-Type: application/json" \

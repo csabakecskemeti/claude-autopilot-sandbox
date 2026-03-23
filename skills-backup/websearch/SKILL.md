@@ -1,39 +1,62 @@
 ---
 name: websearch
-description: Search the web using the local Whoogle search service. Use for ANY web search - the native WebSearch tool does not work with local LLMs. Use when asked to search online, look up information, research topics, or find current information.
-allowed-tools: Bash
+description: Search the web using Playwright browser automation (MCP). Use for web research when you need to search Google or browse web pages. Slower than API-based search but bypasses blocking.
+allowed-tools: mcp__playwright__*
 ---
 
-# Web Search
+# Web Search (Playwright MCP)
 
-Search the web using the local Whoogle instance.
+Search the web using real browser automation via the Playwright MCP server.
 
-**IMPORTANT:** Always use this skill for web searches. The native WebSearch tool does not work with local LLMs.
+**Why Playwright?** Google blocks API-like requests from Whoogle/proxies. Using a real browser bypasses this blocking.
 
-## Usage
+## Available MCP Tools
 
-```bash
-~/.claude/skills/websearch/local_websearch.sh "<search query>"
+The `playwright` MCP server provides these tools:
+
+| Tool | Description |
+|------|-------------|
+| `browser_navigate` | Navigate to a URL |
+| `browser_snapshot` | Get page accessibility snapshot (structured content) |
+| `browser_click` | Click an element |
+| `browser_type` | Type text into an element |
+| `browser_screenshot` | Take a screenshot |
+
+## How to Search Google
+
+### Step 1: Navigate to Google
+```
+Use mcp__playwright__browser_navigate with url: "https://www.google.com"
 ```
 
-## Examples
-
-```bash
-# General search
-~/.claude/skills/websearch/local_websearch.sh "Python asyncio tutorial"
-
-# Technical documentation
-~/.claude/skills/websearch/local_websearch.sh "Docker compose networking guide"
-
-# Current information
-~/.claude/skills/websearch/local_websearch.sh "latest news about AI"
+### Step 2: Type Search Query
+```
+Use mcp__playwright__browser_type with:
+  - element: "Search" (or the search box identifier from snapshot)
+  - text: "your search query"
+  - submit: true
 ```
 
-## Response
+### Step 3: Get Results
+```
+Use mcp__playwright__browser_snapshot to get the page content
+```
 
-Returns JSON results from Whoogle (configured via `WHOOGLE_URL` environment variable).
+## Example Workflow
 
-Parse the JSON and present relevant results to the user in a readable format with:
-- Title
-- URL
-- Brief description
+1. Navigate to Google
+2. Accept cookies if prompted (click "Accept all")
+3. Type search query and submit
+4. Get snapshot of results page
+5. Parse results from the structured accessibility data
+
+## Notes
+
+- **Slower than Whoogle** - Real browser startup + page loads (~5-10s vs ~1s)
+- **More reliable** - Bypasses Google's API blocking
+- **Full browser** - Can handle JavaScript, cookies, consent dialogs
+- **Headless** - Runs without visible window (uses Xvfb)
+
+## Fallback
+
+If MCP tools are unavailable, you can use the `/fetch` skill to retrieve specific URLs directly.

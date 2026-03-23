@@ -10,13 +10,13 @@ CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
 # Create .claude directory in workspace if it doesn't exist
 mkdir -p "$CLAUDE_DIR"
 
-# Generate PROJECT-LEVEL settings.json with hooks configuration
+# Generate PROJECT-LEVEL settings.json with hooks and MCP server configuration
 # Project-level takes precedence over user-level, so hooks MUST be here
 cat > "${CLAUDE_DIR}/settings.json" << EOF
 {
   "permissions": {
     "allow": ["*"],
-    "deny": ["WebSearch", "EnterPlanMode"]
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode"]
   },
   "hooks": {
     "Stop": [
@@ -30,6 +30,15 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
         ]
       }
     ]
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp"],
+      "env": {
+        "DISPLAY": ":99"
+      }
+    }
   },
   "env": {
     "TRACE_TO_LANGFUSE": "${TRACE_TO_LANGFUSE:-false}",

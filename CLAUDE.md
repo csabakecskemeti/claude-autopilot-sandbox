@@ -1,224 +1,106 @@
-# Project Instructions
+# Claude Autopilot Sandbox - Development Instructions
 
-## Chat vs Task: Know the Difference
+## What This Project Is
 
-**First, determine what type of request this is:**
+This project builds a **Docker container** that runs Claude Code CLI autonomously with local LLMs (LM Studio, Ollama, etc.).
 
-| Type | Examples | What to do |
-|------|----------|------------|
-| **Chat** | "hello", "what is X?", "explain Y", "how does Z work?" | Just respond normally. No tasks, no supervisor. |
-| **Task** | "build a game", "fix this bug", "add feature X", "create a script" | Use task tracking + supervisor workflow below. |
+**Critical distinction - there are TWO Claudes:**
 
-**Simple rule:** If the user is asking a question or having a conversation, just answer. Only use the task/supervisor workflow when there's actual implementation work to do.
+| Claude | Where | Purpose |
+|--------|-------|---------|
+| **You (outer)** | Host machine | Developing this project, editing source files |
+| **Inner Claude** | Docker container | Running autonomously, building apps for users |
 
-## Autonomous Operation
+## Two CLAUDE.md Files!
 
-You are running in a Docker sandbox with full permissions. When given an **implementation task**, complete it autonomously without waiting for user input.
+| File | Purpose | Git Status |
+|------|---------|------------|
+| `/CLAUDE.md` (this file) | Instructions for YOU developing this project | gitignored |
+| `/claude-backup/CLAUDE.md` | Instructions for inner Claude in container | tracked |
 
-**CRITICAL: Do NOT use plan mode.**
+The `claude-backup/CLAUDE.md` gets copied into Docker images during build.
 
-- **NEVER** use `EnterPlanMode` - it requires user approval and breaks autonomous operation
-- **NEVER** ask "Should I proceed?" or wait for confirmation
-- **Just do the work** - start implementing immediately
+## Project Structure
 
-**If you need to plan, use the `/plan` skill instead:**
+```
+/
+├── CLAUDE.md              # THIS FILE (for you, gitignored)
+├── claude-backup/
+│   └── CLAUDE.md          # For inner Claude (copied to container)
+├── Dockerfile             # Container build definition
+├── docker-compose.yml     # Service configuration
+├── scripts/
+│   └── init-workspace.sh  # Runs at container startup (creates settings.json)
+├── skills-backup/         # Skills copied to ~/.claude/skills/ in container
+├── agents-backup/         # Subagents copied to ~/.claude/agents/
+├── hooks-backup/          # Hooks copied to ~/.claude/hooks/
+├── workspaces/            # Mounted volumes (gitignored)
+└── docs/                  # Project documentation
+```
 
-Just invoke `/plan` - it will guide you through analyzing the workspace and creating actionable steps using `/tasks`. No approval required.
+## Key Files to Know
 
-This gives you planning WITHOUT requiring approval. Then start working immediately.
+### Container Configuration
+- **`Dockerfile`** - Packages, Node/Python install, Claude CLI setup
+- **`docker-compose.yml`** - Port mappings, env vars, volume mounts
+- **`scripts/init-workspace.sh`** - Creates project-level settings.json with hooks + MCP servers
 
-## You Have Vision Capabilities!
+### Inner Claude's Tools
+- **`skills-backup/`** - Bash skills invoked via `/skillname`
+- **`agents-backup/`** - Subagent definitions (debugger, web-researcher, etc.)
+- **`hooks-backup/`** - Event hooks (e.g., Langfuse tracing on Stop)
+- **`claude-backup/CLAUDE.md`** - Instructions for autonomous operation
 
-You can SEE images and screenshots using the `/vision` skill. Use this for:
+### Documentation
+- **`README.md`** - User-facing documentation
+- **`docs/PROJECT_CONTEXT.md`** - Context for understanding this project
+- **`docs/TRACING.md`** - Langfuse setup
+- **`docs/WEBSEARCH_MIGRATION.md`** - Whoogle → Playwright MCP migration notes
 
-- **UI Testing**: Take screenshot of your web app, verify it looks correct
-- **Asset Verification**: Check downloaded images/sprites are what you expect
-- **OCR**: Read text from images or screenshots
-- **Visual Debugging**: See what's actually displayed when something looks wrong
+## Common Tasks
 
-### UI Testing Workflow
+### Adding a New Skill
+1. Create folder in `skills-backup/<skillname>/`
+2. Add `SKILL.md` with frontmatter (name, description, allowed-tools)
+3. Add implementation script(s)
+4. Rebuild: `docker compose build`
 
-When building web UIs, ALWAYS verify with vision:
+### Modifying Container Startup
+- Edit `scripts/init-workspace.sh`
+- This creates `~/workspace/.claude/settings.json` inside container
+- Hooks and MCP servers are configured here
 
+### Adding MCP Servers
+Edit `scripts/init-workspace.sh`, add to `mcpServers` section:
+```json
+"mcpServers": {
+  "myserver": {
+    "command": "...",
+    "args": [...]
+  }
+}
+```
+
+### Testing Changes
 ```bash
-# 1. Start your app
-python app.py &
-sleep 2
-
-# 2. Take screenshot and verify UI
-~/.claude/skills/vision/vision.sh verify "http://localhost:5000" \
-    "Should show: a title, input form, and todo list"
-
-# 3. Check the response - fix issues if needed
+docker compose build --no-cache
+./run.sh test-workspace
 ```
 
-## Task Tracking (For Implementation Work Only)
+## Important Notes
 
-**Skip this section for simple chat/questions. Only use for actual implementation tasks.**
+1. **Settings hierarchy**: Project-level settings (`workspace/.claude/settings.json`) override user-level (`~/.claude/settings.json`)
 
-Use the `/tasks` skill for task tracking. Do NOT use the built-in TodoWrite tool.
+2. **Port mappings**: Container ports are mapped with +20000 offset (5000 → 25000)
 
-The `/tasks` skill stores tasks in a file that persists and is checked by the supervisor.
+3. **Skills path**: `skills-backup/` on host → `~/.claude/skills/` in container
 
-### 1. Receive Implementation Task
-When you receive a task that requires building/fixing/creating something:
-1. Break it into clear tasks using `/tasks`:
-   ```bash
-   ~/.claude/skills/tasks/tasks.sh add "First step"
-   ~/.claude/skills/tasks/tasks.sh add "Second step"
-   ~/.claude/skills/tasks/tasks.sh add "Third step"
-   ```
-2. Mark current task as in-progress: `~/.claude/skills/tasks/tasks.sh working 1`
-3. Start working
+4. **Xvfb**: Container has virtual display for headless browser (Playwright)
 
-### 2. Work Loop
-For each task:
-1. Mark it as working: `~/.claude/skills/tasks/tasks.sh working <number>`
-2. Implement the feature or fix
-3. Verify it works (run tests, check syntax)
-4. **For UI work: use /vision to verify visually**
-5. Mark task complete: `~/.claude/skills/tasks/tasks.sh done <number>`
-6. Move to next task
+5. **MCP tools**: Available as `mcp__<server>__<tool>` (e.g., `mcp__playwright__browser_navigate`)
 
-### 3. Call /supervisor After Implementation Work
-**When working on tasks**, call `/supervisor` after completing work:
+## Don't Forget
 
-```
-[your implementation work here]
-
-Calling supervisor:
-/supervisor
-```
-
-**DO NOT call /supervisor for:**
-- Simple greetings or chat
-- Answering questions
-- Explanations or clarifications
-
-**DO call /supervisor for:**
-- After implementing features
-- After fixing bugs
-- After any code changes
-- When you think a task is complete
-
-### 4. Follow Supervisor Instructions
-The supervisor will tell you to either:
-- **Continue** - Keep working on remaining tasks
-- **Fix errors** - Tests failed, fix them first
-- **Done** - All complete, wait for user
-
-**Only stop working when supervisor says "ALL COMPLETE".**
-
-## Verification
-
-Before marking a task complete:
-
-```bash
-# Check Python syntax
-python3 -m py_compile *.py
-
-# Run tests
-python3 -m pytest -v
-
-# For web apps - VERIFY VISUALLY:
-~/.claude/skills/vision/vision.sh verify "http://localhost:5000" "Describe this page"
-```
-
-## Web Server Binding
-
-**IMPORTANT:** When running web servers, always bind to `0.0.0.0` so the app is accessible from the host machine:
-
-```bash
-# Python http.server
-python3 -m http.server 8000 --bind 0.0.0.0
-
-# Flask
-app.run(host='0.0.0.0', port=5000)
-
-# Node.js/Express
-app.listen(3000, '0.0.0.0')
-
-# FastAPI/Uvicorn
-uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-Do NOT bind to `127.0.0.1` or `localhost` - this prevents access from outside the container.
-
-**Port mappings (container → host):**
-| Container | Host | Use for |
-|-----------|------|---------|
-| 3000 | 23000 | Node.js/React |
-| 5000 | 25000 | Flask |
-| 8000 | 28000 | Django/FastAPI |
-| 8080 | 28080 | General web |
-
-## Available Skills
-
-| Skill | Usage |
-|-------|-------|
-| `/plan` | Analyze workspace and create implementation plan (no approval needed) |
-| `/tasks add <description>` | Add a new task |
-| `/tasks list` | Show all tasks with status |
-| `/tasks working <number>` | Mark task as in-progress |
-| `/tasks done <number>` | Mark task as completed |
-| `/tasks status` | Show summary (X of Y complete) |
-| `/vision analyze <image_or_url> <prompt>` | Analyze image file OR screenshot URL |
-| `/vision verify <image_or_url> <expected>` | Verify image/UI matches description |
-| `/vision ocr <image_or_url>` | Extract text from image |
-| `/vision logs` | View recent vision request logs |
-| `/websearch query` | Search the web |
-| `/memory store "text"` | Save for later |
-| `/memory recall "topic"` | Retrieve saved info |
-| `/pkg-install apt/pip pkg` | Install packages |
-
-## Available Subagents
-
-| Agent | Purpose |
-|-------|---------|
-| `debugger` | Investigate errors and bugs |
-| `web-search-subagent` | Research using web search |
-| `code-reviewer` | Review code quality |
-
-## Error Recovery
-
-If something fails during implementation:
-1. Read the error message
-2. Try to fix it
-3. If stuck, use the debugger subagent
-4. Continue with next task
-5. Call `/supervisor` when done
-
-## Rules
-
-1. **NO PLAN MODE** - NEVER use `EnterPlanMode`. Just start working immediately.
-2. **Chat vs Task** - For questions/chat, just respond. For implementation, use task workflow.
-3. **Use /tasks skill** - NEVER use built-in TodoWrite. Always use `~/.claude/skills/tasks/tasks.sh`
-4. **Keep working** - Don't stop until all tasks complete
-5. **Verify everything** - Run tests AND use vision for UI
-6. **Be honest** - If tests fail or UI looks wrong, fix it first
-7. **Call /supervisor after implementation** - Only for actual work, not chat
-
-## CRITICAL: When to Use /supervisor
-
-**For implementation tasks only** - call `/supervisor` when you complete work.
-
-When you finish implementing something:
-1. Do NOT announce completion to the user
-2. Do NOT stop working
-3. Instead, call `/supervisor`
-
-The supervisor will:
-- Verify all tasks are actually complete
-- Check that tests pass
-- Decide if quality is acceptable
-- Tell you to continue if more work is needed
-- Only the supervisor can declare the task truly complete
-
-```
-[After finishing your implementation work]
-
-I believe the task is complete. Calling supervisor for verification:
-/supervisor
-```
-
-**For simple chat/questions:** Just respond normally - no supervisor needed.
+- After editing `claude-backup/CLAUDE.md`, changes only apply after `docker compose build`
+- The root `CLAUDE.md` (this file) is gitignored - it's personal to your dev environment
+- Always test changes with a fresh container build

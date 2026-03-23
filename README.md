@@ -69,8 +69,8 @@ LLM_MODEL=your-model-name
 # Vision Model (optional)
 VISION_MODEL=qwen/qwen3-vl-4b
 
-# Whoogle Search (optional)
-WHOOGLE_URL=http://your-whoogle:5000
+# Web Search (Playwright MCP - no external service needed)
+# The container includes @playwright/mcp for browser-based web search
 
 # Langfuse Tracing (optional - for agent evaluation)
 TRACE_TO_LANGFUSE=true
@@ -197,8 +197,9 @@ Skills are invoked with `/skillname` syntax:
 | `/plan` | `/plan` | Create implementation plan (no approval needed) |
 | `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr <image_or_url>` | Image analysis, UI verification, OCR |
+| `/webfetch` | `/webfetch <url> "<prompt>"` | Fetch URL and analyze with local LLM |
 | `/supervisor` | `/supervisor` | Check progress and decide next action |
-| `/websearch` | `/websearch <query>` | Web search via Whoogle |
+| `/websearch` | Use Playwright MCP tools | Web search via browser automation |
 | `/memory` | `/memory store/recall <text>` | Persistent memory across sessions |
 | `/notes` | `/notes add/read <name>` | Note-taking system |
 | `/pkg-install` | `/pkg-install apt/pip <pkg>` | Install packages at runtime |
@@ -370,8 +371,9 @@ docker compose build --no-cache
 ### WebSearch not working
 
 - Native WebSearch only works with Anthropic's API
-- Use `/websearch` skill instead (requires Whoogle)
-- Leave `WHOOGLE_URL` empty if you don't have Whoogle
+- Use Playwright MCP tools for web search (browser automation)
+- The `/websearch` skill uses `@playwright/mcp` which is built into the container
+- See `docs/WEBSEARCH_MIGRATION.md` for details
 
 ### Container exits immediately
 
@@ -444,7 +446,9 @@ claude-autopilot-sandbox/
 ├── watchdog.sh            # External nudge script (optional)
 ├── INSTALL.md             # Detailed installation guide
 ├── USER_MANUAL.md         # User documentation
-├── CLAUDE.md              # Template copied to new workspaces
+├── CLAUDE.md              # Dev instructions for outer Claude (gitignored)
+├── claude-backup/
+│   └── CLAUDE.md          # Instructions for inner Claude (copied to container)
 ├── LM_STUDIO_SETUP.md     # Guide for setting up LM Studio
 ├── docs/                  # Additional documentation
 │   └── TRACING.md         # Langfuse tracing setup guide

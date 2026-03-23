@@ -63,6 +63,10 @@ RUN pip3 install --break-system-packages \
 # Install Playwright browsers
 RUN playwright install chromium
 
+# Install Playwright MCP server for web search capability
+# This provides browser automation that bypasses Google API blocking
+RUN npm install -g @playwright/mcp
+
 # Create non-root user with sudo access
 RUN useradd -m -s /bin/bash claude \
     && echo "claude ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
@@ -92,8 +96,8 @@ COPY --chown=claude:claude agents-backup/ /home/claude/.claude/agents/
 COPY --chown=claude:claude hooks-backup/ /home/claude/.claude/hooks/
 COPY --chown=claude:claude scripts/ /home/claude/.claude/scripts/
 
-# Copy CLAUDE.md for autonomous operation instructions
-COPY --chown=claude:claude CLAUDE.md /home/claude/workspace/CLAUDE.md
+# Copy CLAUDE.md for autonomous operation instructions (from claude-backup/)
+COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/workspace/CLAUDE.md
 
 # Make all skill, hook, and init scripts executable
 RUN find /home/claude/.claude/skills -name "*.sh" -exec chmod +x {} \; \
@@ -122,7 +126,7 @@ RUN echo '{\
 RUN echo '{\
   "permissions": {\
     "allow": ["*"],\
-    "deny": ["WebSearch", "EnterPlanMode"]\
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode"]\
   },\
   "skipDangerousModePermissionPrompt": true\
 }' > /home/claude/.claude/settings.json

@@ -1,117 +1,58 @@
 ---
 name: supervisor
-description: Simple progress supervisor. Checks task status using /tasks skill and decides whether to continue or stop. Call at the end of every turn to maintain autonomous operation.
+description: Check task progress and decide next action. Call after completing implementation work.
 allowed-tools: Bash, Read
 ---
 
-# Supervisor
+# Supervisor Check
 
-Simple progress check and continuation decision. Call `/supervisor` at the end of every turn.
+## Current Task Status
 
-## When Invoked
+!`~/.claude/skills/tasks/tasks.sh list 2>&1`
 
-### Step 1: Check Task Status
+!`~/.claude/skills/tasks/tasks.sh status 2>&1`
 
-Check current tasks using the tasks skill:
+---
 
-```bash
-~/.claude/skills/tasks/tasks.sh status
-~/.claude/skills/tasks/tasks.sh list
-```
+## Your Job Now
 
-Review the output:
-- How many complete vs pending?
-- Is there active work in progress?
-- Are any tasks stuck?
+Based on the task status above:
 
-### Step 2: Test the Solution
+1. **If tasks remain incomplete** → Continue working on the next pending task
+2. **If all tasks complete** → Verify the work meets the original request
+3. **If UI project** → Run `/vision verify` to check visually before declaring done
 
-1. Recall the **original user request** - what did they ask for?
-2. Verify the completed work **actually meets that intent**
-3. Run/test/check the output to confirm it works
+## Decision Guide
 
-Ask yourself: "If I were the user, would I be satisfied with this result?"
+| Status | Action |
+|--------|--------|
+| Tasks pending | Mark next as working, continue implementing |
+| All complete, no UI | Declare done, summarize what was built |
+| All complete, has UI | Run `/vision verify` first, then declare done |
+| Tests failing | Add fix tasks, continue working |
 
-### Step 3: Add Tasks if Issues Found
-
-If verification reveals problems, add new tasks:
+## Quick Commands
 
 ```bash
-~/.claude/skills/tasks/tasks.sh add "Fix: [specific issue found]"
-~/.claude/skills/tasks/tasks.sh add "Fix: [another issue]"
-```
+# Mark task as working
+~/.claude/skills/tasks/tasks.sh working <num>
 
-Then instruct agent to continue working on the new tasks.
+# Mark task as done
+~/.claude/skills/tasks/tasks.sh done <num>
 
-### Step 4: Decide Action
+# Add new task if issues found
+~/.claude/skills/tasks/tasks.sh add "Fix: <issue>"
 
-Based on verification results:
-
-**If tests FAIL or errors exist:**
-```bash
-# Add tasks for each issue found
-~/.claude/skills/tasks/tasks.sh add "Fix: [specific error]"
-```
-
-Then output:
-```
-===========================================================
-[!] SUPERVISOR: ERRORS FOUND - CONTINUE FIXING
-===========================================================
-
-Errors found:
-- [list errors]
-
-Added new tasks for fixes. Current status:
-[output of tasks.sh status]
-
-INSTRUCTION: Fix these errors now. Start with task 1.
-
-Continue working. Do NOT stop.
-===========================================================
-```
-
-**If tests PASS and tasks remain:**
-```
-===========================================================
-[OK] SUPERVISOR: PROGRESS OK - CONTINUE
-===========================================================
-
-Completed: X of Y tasks
-Tests: PASSING
-
-INSTRUCTION: Continue with next task:
-- [next pending task]
-
-Mark current task as working:
-~/.claude/skills/tasks/tasks.sh working <number>
-
-Keep working. Do NOT stop.
-===========================================================
-```
-
-**If ALL tasks complete and tests pass:**
-```
-===========================================================
-[DONE] SUPERVISOR: ALL COMPLETE
-===========================================================
-
-All tasks completed. Tests passing.
-
-Summary:
-- [what was built]
-
-Clear tasks for next session:
+# Clear tasks when fully complete
 ~/.claude/skills/tasks/tasks.sh clear
-
-Waiting for user review or new task.
-===========================================================
 ```
 
-## Critical Rules
+## When Done
 
-1. **Be honest** - If tests fail, say so
-2. **Keep it simple** - Just check tasks and tests
-3. **Always give clear instruction** - Tell agent exactly what to do next
-4. **Only stop when truly done** - All tasks complete AND tests pass
-5. **Track with /tasks** - Always use the tasks skill, not built-in todos
+Output a summary:
+```
+ALL COMPLETE
+
+Built: [what was created]
+Verified: [tests/vision status]
+```

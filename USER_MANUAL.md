@@ -85,6 +85,7 @@ Skills are invoked with `/skillname` syntax:
 | `/plan` | `/plan` | Create implementation plan (no approval needed) |
 | `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr` | Image analysis and UI verification |
+| `/webfetch` | `/webfetch <url> "<prompt>"` | Fetch URL and analyze with local LLM |
 | `/supervisor` | `/supervisor` | Evaluate progress and continue |
 | `/websearch` | `/websearch query` | Web search via Whoogle |
 | `/memory` | `/memory store/recall` | Persistent memory across sessions |
