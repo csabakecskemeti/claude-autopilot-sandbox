@@ -5,7 +5,11 @@
 # Adapted from LangSmith hook for self-hosted Langfuse.
 ###
 
-set -e
+# CRITICAL: Disable bash history expansion to handle ! characters in JSON
+set +H
+
+# Don't use set -e (exit on error) - handle errors gracefully instead
+# set -e  # DISABLED - causes crashes without cleanup
 
 # Config (needed early for logging)
 LOG_FILE="$HOME/.claude/state/hook.log"
@@ -13,6 +17,17 @@ DEBUG="$(echo "$LANGFUSE_DEBUG" | tr '[:upper:]' '[:lower:]')"
 
 # Ensure log directory exists FIRST
 mkdir -p "$(dirname "$LOG_FILE")"
+
+# Cleanup function for graceful exit
+cleanup() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        log "ERROR" "Hook exited with code $exit_code"
+    fi
+    # Kill any background jobs
+    jobs -p | xargs -r kill 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # Logging functions
 log() {
@@ -116,13 +131,13 @@ load_state() {
 # Save state
 save_state() {
     local state="$1"
-    echo "$state" > "$STATE_FILE"
+    printf '%s\n' "$state" > "$STATE_FILE" 2>/dev/null || log "ERROR" "Failed to save state"
 }
 
-# Get message content
+# Get message content (using printf for safety with special chars)
 get_content() {
     local msg="$1"
-    echo "$msg" | jq -c 'if type == "object" and has("message") then .message.content elif type == "object" then .content else null end'
+    printf '%s' "$msg" | jq -c 'if type == "object" and has("message") then .message.content elif type == "object" then .content else null end' 2>/dev/null || echo "null"
 }
 
 # Check if message is tool result
@@ -131,7 +146,7 @@ is_tool_result() {
     local content
     content=$(get_content "$msg")
 
-    if echo "$content" | jq -e 'if type == "array" then any(.[]; type == "object" and .type == "tool_result") else false end' > /dev/null 2>&1; then
+    if printf '%s' "$content" | jq -e 'if type == "array" then any(.[]; type == "object" and .type == "tool_result") else false end' > /dev/null 2>&1; then
         echo "true"
     else
         echo "false"
@@ -145,23 +160,23 @@ extract_text() {
     content=$(get_content "$msg")
 
     # Handle string content
-    if echo "$content" | jq -e 'type == "string"' > /dev/null 2>&1; then
+    if printf '%s' "$content" | jq -e 'type == "string"' > /dev/null 2>&1; then
         local text
-        text=$(echo "$content" | jq -r '.')
+        text=$(printf '%s' "$content" | jq -r '.' 2>/dev/null) || text=""
         # Skip if whitespace-only
-        if [ -n "$(echo "$text" | tr -d '[:space:]')" ]; then
-            echo "$text"
+        if [ -n "$(printf '%s' "$text" | tr -d '[:space:]')" ]; then
+            printf '%s' "$text"
         fi
         return
     fi
 
     # Handle array content - extract text blocks, filtering out whitespace-only
-    if echo "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
-        echo "$content" | jq -r '
+    if printf '%s' "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
+        printf '%s' "$content" | jq -r '
             [.[] | select(type == "object" and .type == "text") | .text] |
             map(select(. | gsub("\\s"; "") | length > 0)) |
             join("\n")
-        '
+        ' 2>/dev/null || echo ""
         return
     fi
 
@@ -174,18 +189,18 @@ get_tool_uses() {
     local content
     content=$(get_content "$msg")
 
-    if ! echo "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
+    if ! printf '%s' "$content" | jq -e 'type == "array"' > /dev/null 2>&1; then
         echo "[]"
         return
     fi
 
-    echo "$content" | jq -c '[.[] | select(type == "object" and .type == "tool_use")]'
+    printf '%s' "$content" | jq -c '[.[] | select(type == "object" and .type == "tool_use")]' 2>/dev/null || echo "[]"
 }
 
 # Get usage from assistant message
 get_usage() {
     local msg="$1"
-    echo "$msg" | jq -c 'if type == "object" and has("message") then .message.usage // null else null end'
+    printf '%s' "$msg" | jq -c 'if type == "object" and has("message") then .message.usage // null else null end' 2>/dev/null || echo "null"
 }
 
 # Find tool result
@@ -193,7 +208,7 @@ find_tool_result() {
     local tool_id="$1"
     local tool_results="$2"
 
-    echo "$tool_results" | jq -r --arg id "$tool_id" '
+    printf '%s' "$tool_results" | jq -r --arg id "$tool_id" '
         first(
             .[] |
             (if type == "object" and has("message") then .message.content elif type == "object" then .content else null end) as $content |
@@ -218,7 +233,7 @@ find_tool_result() {
 merge_assistant_parts() {
     local parts="$1"
 
-    echo "$parts" | jq -s '
+    printf '%s' "$parts" | jq -s '
         .[0][0] as $base |
         (.[0] | map(if type == "object" and has("message") then .message.content elif type == "object" then .content else null end) | map(select(. != null))) as $contents |
         ($contents | map(
@@ -609,24 +624,25 @@ main() {
             continue
         fi
 
+        # Safely extract role - handle jq failures gracefully
         local role
-        role=$(echo "$line" | jq -r 'if type == "object" and has("message") then .message.role elif type == "object" then .role else "unknown" end')
+        role=$(printf '%s' "$line" | jq -r 'if type == "object" and has("message") then .message.role elif type == "object" then .role else "unknown" end' 2>/dev/null) || role="unknown"
 
         if [ "$role" = "user" ]; then
             if [ "$(is_tool_result "$line")" = "true" ]; then
-                current_tool_results=$(echo "$current_tool_results" | jq --argjson msg "$line" '. += [$msg]')
+                current_tool_results=$(printf '%s' "$current_tool_results" | jq --argjson msg "$line" '. += [$msg]' 2>/dev/null) || current_tool_results="[]"
             else
                 # Finalize pending assistant message
-                if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+                if [ -n "$current_msg_id" ] && [ "$(printf '%s' "$current_assistant_parts" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
                     local merged
                     merged=$(merge_assistant_parts "$current_assistant_parts")
-                    current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+                    current_assistants=$(printf '%s' "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]' 2>/dev/null) || current_assistants="[]"
                     current_assistant_parts="[]"
                     current_msg_id=""
                 fi
 
                 # Create trace for previous turn
-                if [ -n "$current_user" ] && [ "$(echo "$current_assistants" | jq 'length')" -gt 0 ]; then
+                if [ -n "$current_user" ] && [ "$(printf '%s' "$current_assistants" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
                     turns=$((turns + 1))
                     local turn_num=$((turn_count + turns))
                     create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
@@ -641,17 +657,17 @@ main() {
             fi
         elif [ "$role" = "assistant" ]; then
             local msg_id
-            msg_id=$(echo "$line" | jq -r 'if type == "object" and has("message") then .message.id else "" end')
+            msg_id=$(printf '%s' "$line" | jq -r 'if type == "object" and has("message") then .message.id else "" end' 2>/dev/null) || msg_id=""
 
             if [ -z "$msg_id" ]; then
-                current_assistant_parts=$(echo "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]')
+                current_assistant_parts=$(printf '%s' "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]' 2>/dev/null) || true
             elif [ "$msg_id" = "$current_msg_id" ]; then
-                current_assistant_parts=$(echo "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]')
+                current_assistant_parts=$(printf '%s' "$current_assistant_parts" | jq --argjson msg "$line" '. += [$msg]' 2>/dev/null) || true
             else
-                if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+                if [ -n "$current_msg_id" ] && [ "$(printf '%s' "$current_assistant_parts" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
                     local merged
                     merged=$(merge_assistant_parts "$current_assistant_parts")
-                    current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+                    current_assistants=$(printf '%s' "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]' 2>/dev/null) || true
                 fi
                 current_msg_id="$msg_id"
                 current_assistant_parts=$(jq -n --argjson msg "$line" '[$msg]')
@@ -660,13 +676,13 @@ main() {
     done <<< "$new_messages"
 
     # Process final turn
-    if [ -n "$current_msg_id" ] && [ "$(echo "$current_assistant_parts" | jq 'length')" -gt 0 ]; then
+    if [ -n "$current_msg_id" ] && [ "$(printf '%s' "$current_assistant_parts" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
         local merged
         merged=$(merge_assistant_parts "$current_assistant_parts")
-        current_assistants=$(echo "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]')
+        current_assistants=$(printf '%s' "$current_assistants" | jq --argjson msg "$merged" '. += [$msg]' 2>/dev/null) || true
     fi
 
-    if [ -n "$current_user" ] && [ "$(echo "$current_assistants" | jq 'length')" -gt 0 ]; then
+    if [ -n "$current_user" ] && [ "$(printf '%s' "$current_assistants" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
         turns=$((turns + 1))
         local turn_num=$((turn_count + turns))
         create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
@@ -676,12 +692,12 @@ main() {
     local updated
     updated=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    state=$(echo "$state" | jq \
+    state=$(printf '%s' "$state" | jq \
         --arg sid "$session_id" \
         --arg line "$new_last_line" \
         --arg count "$((turn_count + turns))" \
         --arg time "$updated" \
-        '.[$sid] = {last_line: ($line | tonumber), turn_count: ($count | tonumber), updated: $time}')
+        '.[$sid] = {last_line: ($line | tonumber), turn_count: ($count | tonumber), updated: $time}' 2>/dev/null) || state="{}"
 
     save_state "$state"
 

@@ -37,6 +37,11 @@ You are running in a self-contained Docker sandbox with full permissions. You ha
 
 ## Available Capabilities
 
+**Native Tools vs Skills:**
+- **Native tools** (Read, Write, Edit, Bash, Glob, Grep) → Call directly
+- **Skills** (/tasks, /vision, /fetch, etc.) → Call via Bash: `~/.claude/skills/<name>/<script>`
+- **MCP tools** (mcp__playwright__*) → Call directly with mcp__ prefix
+
 ### Task Tracking (`/tasks`)
 Track your work plan. Add tasks, mark progress, check status.
 ```bash
@@ -51,10 +56,13 @@ Evaluates your work. Checks tasks, tests, verification. Tells you to continue or
 
 ### Vision (`/vision`)
 See images and screenshots. Analyze UIs, verify visual output, OCR.
+
+**IMPORTANT:** Vision is a BASH SKILL, not a native tool. Call it via Bash:
 ```bash
 ~/.claude/skills/vision/vision.sh analyze <image_or_url> "prompt"
 ~/.claude/skills/vision/vision.sh verify <url> "expected elements"
 ```
+Do NOT try to call `Vision` as a tool directly - it will fail with "No such tool".
 
 ### Web Search (Playwright MCP)
 Browser automation for web research. No external services needed.
