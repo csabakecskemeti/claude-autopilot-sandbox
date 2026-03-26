@@ -18,6 +18,7 @@ Commands:
   list             Show all tasks
   done <number>    Mark task as completed
   working <number> Mark task as in-progress
+  reset <number>   Reset task to pending
   remove <number>  Remove a task
   clear            Clear all tasks
   status           Show summary
@@ -34,9 +35,27 @@ EOF
 
 # Count tasks by status
 count_tasks() {
-    local total=$(grep -c "^" "$TASKS_FILE" 2>/dev/null || echo 0)
-    local done=$(grep -c "^\[x\]" "$TASKS_FILE" 2>/dev/null || echo 0)
-    local working=$(grep -c "^\[>\]" "$TASKS_FILE" 2>/dev/null || echo 0)
+    # Use wc -l for total (more reliable than grep -c)
+    local total=0
+    local done=0
+    local working=0
+
+    if [ -s "$TASKS_FILE" ]; then
+        total=$(wc -l < "$TASKS_FILE" | tr -d '[:space:]')
+        done=$(grep -c "^\[x\]" "$TASKS_FILE" 2>/dev/null || true)
+        working=$(grep -c "^\[>\]" "$TASKS_FILE" 2>/dev/null || true)
+    fi
+
+    # Ensure numeric values (default to 0 if empty)
+    total=${total:-0}
+    done=${done:-0}
+    working=${working:-0}
+
+    # Remove any whitespace
+    total=$(echo "$total" | tr -d '[:space:]')
+    done=$(echo "$done" | tr -d '[:space:]')
+    working=$(echo "$working" | tr -d '[:space:]')
+
     local pending=$((total - done - working))
     echo "$done $total $working $pending"
 }
@@ -120,6 +139,31 @@ cmd_working() {
     echo "Working on: $task"
 }
 
+cmd_reset() {
+    local num="$1"
+    if [ -z "$num" ]; then
+        echo "Error: Task number required"
+        exit 1
+    fi
+
+    if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+        echo "Error: Invalid task number"
+        exit 1
+    fi
+
+    local total=$(wc -l < "$TASKS_FILE" | tr -d ' ')
+    if [ "$num" -lt 1 ] || [ "$num" -gt "$total" ]; then
+        echo "Error: Task $num not found (have $total tasks)"
+        exit 1
+    fi
+
+    # Mark as pending [ ]
+    sed -i.bak "${num}s/^\[.\]/[ ]/" "$TASKS_FILE" && rm -f "${TASKS_FILE}.bak"
+
+    local task=$(sed -n "${num}p" "$TASKS_FILE" | sed 's/^\[.\] //')
+    echo "Reset to pending: $task"
+}
+
 cmd_remove() {
     local num="$1"
     if [ -z "$num" ]; then
@@ -186,6 +230,9 @@ case "${1:-}" in
         ;;
     working)
         cmd_working "$2"
+        ;;
+    reset)
+        cmd_reset "$2"
         ;;
     remove)
         cmd_remove "$2"

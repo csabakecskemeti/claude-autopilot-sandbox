@@ -1,6 +1,9 @@
 # User configuration
 .env
 
+# Note: /CLAUDE.md is for developing this project (outer Claude)
+# claude-backup/CLAUDE.md is for inner Claude running in container
+
 # Workspaces (created by user/run.sh)
 workspaces/
 

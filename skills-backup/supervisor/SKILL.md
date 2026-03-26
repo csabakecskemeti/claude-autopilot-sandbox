@@ -1,106 +1,65 @@
 ---
 name: supervisor
-description: Simple progress supervisor. Checks task status using /tasks skill and decides whether to continue or stop. Call at the end of every turn to maintain autonomous operation.
+description: Check task progress and decide next action. Call after completing implementation work.
 allowed-tools: Bash, Read
 ---
 
-# Supervisor
+# Supervisor Check
 
-Simple progress check and continuation decision. Call `/supervisor` at the end of every turn.
+## Current Task Status
 
-## When Invoked
+!`~/.claude/skills/tasks/tasks.sh list 2>&1`
 
-### Step 1: Check Task Status
+!`~/.claude/skills/tasks/tasks.sh status 2>&1`
 
-Check current tasks using the tasks skill:
+---
+
+## Your Job Now
+
+Based on the task status above:
+
+1. **If tasks remain incomplete** → Continue working on the next pending task
+2. **If all tasks complete** → Verify the work meets the original request
+3. **If UI project** → Run `/vision verify` to check visually before declaring done
+
+## Decision Guide
+
+| Status | Action |
+|--------|--------|
+| Tasks pending | Mark next as working, continue implementing |
+| All complete, no UI | Declare done, summarize what was built |
+| All complete, has UI | Run `/vision verify` first, then declare done |
+| Tests failing | Add fix tasks, continue working |
+
+## Quick Commands
 
 ```bash
-~/.claude/skills/tasks/tasks.sh status
-~/.claude/skills/tasks/tasks.sh list
-```
+# Mark task as working
+~/.claude/skills/tasks/tasks.sh working <num>
 
-Review the output:
-- How many complete vs pending?
-- Is there active work in progress?
-- Are any tasks stuck?
+# Mark task as done
+~/.claude/skills/tasks/tasks.sh done <num>
 
-### Step 2: Verify Current Work
+# Add new task if issues found
+~/.claude/skills/tasks/tasks.sh add "Fix: <issue>"
 
-Run a quick verification:
-
-```bash
-# Check for syntax errors in Python files
-find ~/workspace -name "*.py" -exec python3 -m py_compile {} \; 2>&1 | head -10
-
-# Run tests if they exist
-python3 -m pytest -v 2>&1 | tail -20 || echo "No pytest tests found"
-
-# Or run a main file
-timeout 5 python3 ~/workspace/main.py 2>&1 | head -20 || echo "No main.py or timeout"
-```
-
-### Step 3: Decide Action
-
-Based on verification results:
-
-**If tests FAIL or errors exist:**
-```
-===========================================================
-[!] SUPERVISOR: ERRORS FOUND - CONTINUE FIXING
-===========================================================
-
-Errors found:
-- [list errors]
-
-INSTRUCTION: Fix these errors now:
-1. [specific fix]
-2. [specific fix]
-
-Continue working. Do NOT stop.
-===========================================================
-```
-
-**If tests PASS and tasks remain:**
-```
-===========================================================
-[OK] SUPERVISOR: PROGRESS OK - CONTINUE
-===========================================================
-
-Completed: X of Y tasks
-Tests: PASSING
-
-INSTRUCTION: Continue with next task:
-- [next pending task]
-
-Mark current task as working:
-~/.claude/skills/tasks/tasks.sh working <number>
-
-Keep working. Do NOT stop.
-===========================================================
-```
-
-**If ALL tasks complete and tests pass:**
-```
-===========================================================
-[DONE] SUPERVISOR: ALL COMPLETE
-===========================================================
-
-All tasks completed. Tests passing.
-
-Summary:
-- [what was built]
-
-Clear tasks for next session:
+# Clear tasks when fully complete
 ~/.claude/skills/tasks/tasks.sh clear
-
-Waiting for user review or new task.
-===========================================================
 ```
 
-## Critical Rules
+## When Done
 
-1. **Be honest** - If tests fail, say so
-2. **Keep it simple** - Just check tasks and tests
-3. **Always give clear instruction** - Tell agent exactly what to do next
-4. **Only stop when truly done** - All tasks complete AND tests pass
-5. **Track with /tasks** - Always use the tasks skill, not built-in todos
+**IMPORTANT:** When declaring complete, you MUST write the completion marker file:
+
+```bash
+# Write completion marker (REQUIRED for auto-continue to detect completion)
+echo "COMPLETE $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORKSPACE/.supervisor_complete"
+```
+
+Then output a summary:
+```
+ALL COMPLETE
+
+Built: [what was created]
+Verified: [tests/vision status]
+```

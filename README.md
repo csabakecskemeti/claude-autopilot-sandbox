@@ -1,5 +1,7 @@
 # Claude Autopilot Sandbox
 
+**Version 1.0.0** | [Changelog](CHANGELOG.md)
+
 Run Claude Code CLI autonomously in a Docker sandbox with your own local LLM. 100% local execution with full tool access for long-running, unattended task completion.
 
 ## Features
@@ -67,8 +69,15 @@ LLM_MODEL=your-model-name
 # Vision Model (optional)
 VISION_MODEL=qwen/qwen3-vl-4b
 
-# Whoogle Search (optional)
-WHOOGLE_URL=http://your-whoogle:5000
+# Web Search (Playwright MCP - no external service needed)
+# The container includes @playwright/mcp for browser-based web search
+
+# Langfuse Tracing (optional - for agent evaluation)
+TRACE_TO_LANGFUSE=true
+LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+LANGFUSE_SECRET_KEY=sk-lf-xxx
+LANGFUSE_HOST=http://host.docker.internal:3000
+LANGFUSE_PROJECT=claude-autopilot-sandbox
 
 # Resource Limits
 MEMORY_LIMIT=16G
@@ -185,9 +194,12 @@ Skills are invoked with `/skillname` syntax:
 
 | Skill | Usage | Description |
 |-------|-------|-------------|
+| `/plan` | `/plan` | Create implementation plan (no approval needed) |
+| `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr <image_or_url>` | Image analysis, UI verification, OCR |
+| `/webfetch` | `/webfetch <url> "<prompt>"` | Fetch URL and analyze with local LLM |
 | `/supervisor` | `/supervisor` | Check progress and decide next action |
-| `/websearch` | `/websearch <query>` | Web search via Whoogle |
+| `/websearch` | Use Playwright MCP tools | Web search via browser automation |
 | `/memory` | `/memory store/recall <text>` | Persistent memory across sessions |
 | `/notes` | `/notes add/read <name>` | Note-taking system |
 | `/pkg-install` | `/pkg-install apt/pip <pkg>` | Install packages at runtime |
@@ -205,6 +217,33 @@ Claude can delegate to specialized subagents:
 | `debugger` | Bug investigation and error fixing |
 | `web-search-subagent` | Research tasks using web search |
 | `code-reviewer` | Code quality and security review |
+
+## Tracing with Langfuse
+
+Track and evaluate agent sessions using Langfuse (self-hosted).
+
+### Quick Setup
+
+1. Add to `.env`:
+   ```env
+   TRACE_TO_LANGFUSE=true
+   LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+   LANGFUSE_SECRET_KEY=sk-lf-xxx
+   LANGFUSE_HOST=http://host.docker.internal:3000
+   ```
+
+2. Rebuild: `docker compose build --no-cache`
+
+3. Run a session - traces appear in Langfuse UI
+
+### What Gets Traced
+
+- Every turn (user message → assistant response)
+- LLM calls with token usage
+- Tool calls (Read, Write, Bash, etc.)
+- Grouped by session for conversation view
+
+See [docs/TRACING.md](docs/TRACING.md) for detailed setup and debugging.
 
 ## The Supervisor System
 
@@ -332,8 +371,9 @@ docker compose build --no-cache
 ### WebSearch not working
 
 - Native WebSearch only works with Anthropic's API
-- Use `/websearch` skill instead (requires Whoogle)
-- Leave `WHOOGLE_URL` empty if you don't have Whoogle
+- Use Playwright MCP tools for web search (browser automation)
+- The `/websearch` skill uses `@playwright/mcp` which is built into the container
+- See `docs/WEBSEARCH_MIGRATION.md` for details
 
 ### Container exits immediately
 
@@ -394,22 +434,37 @@ This is safe because all changes are isolated to the mounted workspace volume.
 
 ```
 claude-autopilot-sandbox/
+├── VERSION                # Current version (1.0.0)
+├── CHANGELOG.md           # Version history
 ├── .env.example           # Configuration template
 ├── .env                   # Your configuration (gitignored)
 ├── .gitignore
+├── .dockerignore          # Docker build exclusions
 ├── docker-compose.yml     # Service definition
 ├── Dockerfile             # Container build
 ├── run.sh                 # Workspace launcher
 ├── watchdog.sh            # External nudge script (optional)
 ├── INSTALL.md             # Detailed installation guide
 ├── USER_MANUAL.md         # User documentation
-├── CLAUDE.md              # Template copied to new workspaces
+├── CLAUDE.md              # Dev instructions for outer Claude (gitignored)
+├── claude-backup/
+│   └── CLAUDE.md          # Instructions for inner Claude (copied to container)
 ├── LM_STUDIO_SETUP.md     # Guide for setting up LM Studio
+├── docs/                  # Additional documentation
+│   └── TRACING.md         # Langfuse tracing setup guide
+├── assets/                # Screenshots and images
+│   └── example-todo-app/  # Example task screenshots
+├── scripts/               # Runtime scripts
+│   └── init-workspace.sh  # Workspace initialization (runs at startup)
+├── hooks-backup/          # Hooks (copied into image)
+│   └── langfuse_stop_hook.sh  # Langfuse tracing hook
 ├── skills-backup/         # Skills (copied into image)
-│   ├── vision/
-│   ├── supervisor/
-│   ├── websearch/
-│   ├── memory/
+│   ├── plan/              # Implementation planning
+│   ├── tasks/             # Task tracking
+│   ├── vision/            # Image/screenshot analysis
+│   ├── supervisor/        # Progress checking
+│   ├── websearch/         # Web search
+│   ├── memory/            # Persistent memory
 │   └── ...
 └── agents-backup/         # Subagents (copied into image)
     ├── debugger.md

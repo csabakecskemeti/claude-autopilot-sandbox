@@ -1,39 +1,30 @@
 ---
 name: websearch
-description: Search the web using the local Whoogle search service. Use for ANY web search - the native WebSearch tool does not work with local LLMs. Use when asked to search online, look up information, research topics, or find current information.
-allowed-tools: Bash
+description: Search the web using Playwright browser automation
 ---
 
 # Web Search
 
-Search the web using the local Whoogle instance.
+Use these Playwright MCP tools for web search:
 
-**IMPORTANT:** Always use this skill for web searches. The native WebSearch tool does not work with local LLMs.
+| Tool | Use for |
+|------|---------|
+| `mcp__playwright__browser_navigate` | Go to a URL |
+| `mcp__playwright__browser_snapshot` | Get page content (use this!) |
+| `mcp__playwright__browser_type` | Type text, submit forms |
+| `mcp__playwright__browser_click` | Click elements |
 
-## Usage
+**WARNING: Do NOT use `browser_screenshot`** - it returns binary image data that will crash the session.
 
-```bash
-~/.claude/skills/websearch/local_websearch.sh "<search query>"
+**To capture screenshots**, save to file then use /vision:
+```javascript
+// Use browser_runjs:
+await page.screenshot({ path: '/home/claude/workspace/screenshot.png' });
 ```
+Then: `~/.claude/skills/vision/vision.sh analyze /home/claude/workspace/screenshot.png "describe"`
 
-## Examples
+## Quick Search
 
-```bash
-# General search
-~/.claude/skills/websearch/local_websearch.sh "Python asyncio tutorial"
-
-# Technical documentation
-~/.claude/skills/websearch/local_websearch.sh "Docker compose networking guide"
-
-# Current information
-~/.claude/skills/websearch/local_websearch.sh "latest news about AI"
-```
-
-## Response
-
-Returns JSON results from Whoogle (configured via `WHOOGLE_URL` environment variable).
-
-Parse the JSON and present relevant results to the user in a readable format with:
-- Title
-- URL
-- Brief description
+1. `mcp__playwright__browser_navigate` → `https://www.google.com`
+2. `mcp__playwright__browser_type` → element: "Search", text: "your query", submit: true
+3. `mcp__playwright__browser_snapshot` → read results

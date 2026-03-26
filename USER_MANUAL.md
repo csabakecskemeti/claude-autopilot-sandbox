@@ -82,11 +82,14 @@ Skills are invoked with `/skillname` syntax:
 
 | Skill | Usage | Description |
 |-------|-------|-------------|
+| `/plan` | `/plan` | Create implementation plan (no approval needed) |
+| `/tasks` | `/tasks add/list/done` | Track task progress |
 | `/vision` | `/vision analyze/verify/ocr` | Image analysis and UI verification |
+| `/webfetch` | `/webfetch <url> "<prompt>"` | Fetch URL and analyze with local LLM |
+| `/supervisor` | `/supervisor` | Evaluate progress and continue |
 | `/websearch` | `/websearch query` | Web search via Whoogle |
 | `/memory` | `/memory store/recall` | Persistent memory across sessions |
 | `/notes` | `/notes add/list` | Note-taking system |
-| `/supervisor` | `/supervisor` | Evaluate progress and continue |
 | `/pkg-install` | `/pkg-install apt/pip pkg` | Install packages at runtime |
 | `/code-runner` | `/code-runner python 'code'` | Execute code snippets |
 | `/file-convert` | `/file-convert pdf2txt in out` | Convert between formats |
@@ -158,6 +161,41 @@ Edit the workspace's `CLAUDE.md` to add project-specific instructions:
 ... (keep the supervisor loop instructions)
 ```
 
+## Tested Models
+
+The following models have been tested and work well with this sandbox:
+
+### Primary LLM
+
+| Model | Context | Notes |
+|-------|---------|-------|
+| `nvidia.nvidia-nemotron-3-super-120b-a12b` | 1M | Excellent for autonomous coding tasks. Good instruction following. |
+
+### Vision Model
+
+| Model | Notes |
+|-------|-------|
+| `qwen/qwen3-vl-4b` | Fast, accurate for UI verification and OCR. |
+
+### Configuration
+
+Set in `.env`:
+```env
+LLM_MODEL=nvidia.nvidia-nemotron-3-super-120b-a12b
+VISION_MODEL=qwen/qwen3-vl-4b
+```
+
+### Model Requirements
+
+For autonomous operation, the LLM should have:
+- **Large context window** - sessions can be long
+- **Good instruction following** - must follow CLAUDE.md instructions
+- **Tool use capability** - needs to call tools correctly
+
+### LM Studio Setup
+
+For detailed LM Studio configuration with these models, see [LM_STUDIO_SETUP.md](LM_STUDIO_SETUP.md).
+
 ## Resource Limits
 
 Default limits in `.env`:
@@ -207,3 +245,158 @@ All tests pass. UI verified with vision. Calling supervisor for final evaluation
 
 [Supervisor confirms completion]
 ```
+
+## Example: Zero-Shot Platformer Game
+
+This example shows the full autonomous workflow building a complete 2D platformer game from a single prompt.
+
+### Setup
+
+**User Prompt:** `accomplish TASK.md`
+
+The TASK.md file contained detailed requirements for a web-based platformer game with:
+- 10+ progressively harder levels
+- Player movement, jumping, shooting
+- Enemy AI and collision detection
+- Cyberpunk theme with real sprites (not colored rectangles)
+- Visual verification of the final result
+
+**Model Configuration:**
+| Component | Model | Hardware |
+|-----------|-------|----------|
+| LLM | `qwen/qwen3.5-35b-a3b` | NVIDIA DGX Spark |
+| Vision | `qwen/qwen3-vl-4b` | NVIDIA DGX Spark |
+
+**Total Time:** 1 hour 9 minutes (fully autonomous)
+
+### What the Agent Did
+
+1. **Planning Phase** - Broke down the project into components:
+   - Rendering engine, physics system, input handling
+   - Game state management, level design
+   - Asset generation (procedural sprites)
+
+2. **Implementation** - Created the game structure:
+   - `index.html` - Game canvas and UI overlay
+   - `styles.css` - Cyberpunk neon styling
+   - `main.js` - Full game engine with 10 levels
+   - `assets/sprites/` - Procedurally generated pixel art
+
+3. **Visual Verification** - Used `/vision verify` to confirm UI:
+
+   ```
+   /vision verify http://localhost:8080 "Should show CYBER-RUNNER title,
+   NEON PROTOCOL subtitle, story text, controls info, and START MISSION button"
+   ```
+
+   Vision response:
+   ```
+   1. PASS
+
+   2. What you actually see:
+   - The screen displays "CYBER-RUNNER" in large, glowing teal letters
+   - Below it, "NEON PROTOCOL" is shown in a smaller, matching font
+   - Story text: "The year is 2087. The city has fallen to the AI..."
+   - A "CONTROLS:" box lists: "→ Move | SPACE / ↑ Jump | SHIFT Shoot"
+   - A prominent "START MISSION" button is centered below
+
+   3. No issues — all expected elements are present and correctly formatted.
+   ```
+
+4. **Supervisor Loop** - Continuously evaluated progress until complete
+
+### Final Result
+
+**Start Screen:**
+
+![Platformer game start screen](assets/zero-shot-platformer-game1.png)
+
+**Gameplay:**
+
+![Platformer game gameplay](assets/zero-shot-platformer-game2.png)
+
+### Vision Verification Logs
+
+All vision requests were automatically logged to `.vision_logs/`:
+
+```
+.vision_logs/
+├── 2026-03-23_20-41-29_analyze.md    # Initial UI analysis
+├── 2026-03-23_20-43-16_analyze.md    # Start screen verification
+├── 2026-03-23_20-43-16_analyze.png   # Screenshot
+├── 2026-03-23_20-56-51_verify.md     # Full UI verification (PASS)
+├── 2026-03-23_20-56-51_verify.png    # Screenshot
+├── 2026-03-23_20-58-25_verify.md     # Final verification (PASS)
+└── 2026-03-23_20-58-25_verify.png    # Screenshot
+```
+
+### Key Takeaways
+
+1. **Zero-shot capability** - Complex game built from a single task file
+2. **Self-verification** - Agent used vision to confirm UI matched requirements
+3. **Autonomous completion** - No human intervention for 1+ hour
+4. **Quality output** - Playable game with proper sprites, not placeholders
+
+## Tracing with Langfuse
+
+Track and evaluate agent sessions using Langfuse. This helps you understand agent behavior, debug issues, and measure performance.
+
+### Setup
+
+1. Add Langfuse credentials to `.env`:
+   ```env
+   TRACE_TO_LANGFUSE=true
+   LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+   LANGFUSE_SECRET_KEY=sk-lf-xxx
+   LANGFUSE_HOST=http://host.docker.internal:3000
+   ```
+
+2. Rebuild and run: `docker compose build && ./run.sh`
+
+### Example: Todo App Task
+
+Here's an example of tracing a simple task: "write a simple web based todo app"
+
+**User Prompt:**
+
+![User prompt for todo app task](assets/example-todo-app/user-prompt.png)
+
+**Traces in Langfuse:**
+
+All turns from the session are captured as individual traces, grouped by session ID:
+
+![Traces overview in Langfuse](assets/example-todo-app/traces.png)
+
+**Final Turn Details:**
+
+Each trace shows the input (user message or skill invocation), output (Claude's response), and tool calls as spans:
+
+![Final turn trace details](assets/example-todo-app/final-turns-trace.png)
+
+**Produced Solution:**
+
+The agent autonomously created a complete todo app:
+
+![Completed todo app solution](assets/example-todo-app/produced-solution.png)
+
+### What Gets Traced
+
+| Component | Description |
+|-----------|-------------|
+| **Trace** | One per turn (user message → assistant response) |
+| **Generation** | LLM call with input, output, and token usage |
+| **Spans** | Tool calls (Read, Write, Bash, Skill, etc.) |
+| **Session** | Groups all turns from one conversation |
+
+### Debugging Tips
+
+```bash
+# Check if hooks are firing
+docker exec $(docker ps -q -f name=claude) cat ~/.claude/state/hook.log
+
+# View recent traces via API
+curl -s -H "Authorization: Basic $(echo -n 'pk:sk' | base64)" \
+  "http://localhost:3000/api/public/traces?limit=5" | jq '.data[].name'
+```
+
+See [docs/TRACING.md](docs/TRACING.md) for detailed setup and troubleshooting.

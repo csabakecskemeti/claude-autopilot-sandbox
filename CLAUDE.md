@@ -1,157 +1,106 @@
-# Project Instructions
+# Claude Autopilot Sandbox - Development Instructions
 
-## Autonomous Operation
+## What This Project Is
 
-You are running in a Docker sandbox with full permissions. Complete tasks autonomously without waiting for user input.
+This project builds a **Docker container** that runs Claude Code CLI autonomously with local LLMs (LM Studio, Ollama, etc.).
 
-## You Have Vision Capabilities!
+**Critical distinction - there are TWO Claudes:**
 
-You can SEE images and screenshots using the `/vision` skill. Use this for:
+| Claude | Where | Purpose |
+|--------|-------|---------|
+| **You (outer)** | Host machine | Developing this project, editing source files |
+| **Inner Claude** | Docker container | Running autonomously, building apps for users |
 
-- **UI Testing**: Take screenshot of your web app, verify it looks correct
-- **Asset Verification**: Check downloaded images/sprites are what you expect
-- **OCR**: Read text from images or screenshots
-- **Visual Debugging**: See what's actually displayed when something looks wrong
+## Two CLAUDE.md Files!
 
-### UI Testing Workflow
+| File | Purpose | Git Status |
+|------|---------|------------|
+| `/CLAUDE.md` (this file) | Instructions for YOU developing this project | gitignored |
+| `/claude-backup/CLAUDE.md` | Instructions for inner Claude in container | tracked |
 
-When building web UIs, ALWAYS verify with vision:
+The `claude-backup/CLAUDE.md` gets copied into Docker images during build.
 
+## Project Structure
+
+```
+/
+├── CLAUDE.md              # THIS FILE (for you, gitignored)
+├── claude-backup/
+│   └── CLAUDE.md          # For inner Claude (copied to container)
+├── Dockerfile             # Container build definition
+├── docker-compose.yml     # Service configuration
+├── scripts/
+│   └── init-workspace.sh  # Runs at container startup (creates settings.json)
+├── skills-backup/         # Skills copied to ~/.claude/skills/ in container
+├── agents-backup/         # Subagents copied to ~/.claude/agents/
+├── hooks-backup/          # Hooks copied to ~/.claude/hooks/
+├── workspaces/            # Mounted volumes (gitignored)
+└── docs/                  # Project documentation
+```
+
+## Key Files to Know
+
+### Container Configuration
+- **`Dockerfile`** - Packages, Node/Python install, Claude CLI setup
+- **`docker-compose.yml`** - Port mappings, env vars, volume mounts
+- **`scripts/init-workspace.sh`** - Creates project-level settings.json with hooks + MCP servers
+
+### Inner Claude's Tools
+- **`skills-backup/`** - Bash skills invoked via `/skillname`
+- **`agents-backup/`** - Subagent definitions (debugger, web-researcher, etc.)
+- **`hooks-backup/`** - Event hooks (e.g., Langfuse tracing on Stop)
+- **`claude-backup/CLAUDE.md`** - Instructions for autonomous operation
+
+### Documentation
+- **`README.md`** - User-facing documentation
+- **`docs/PROJECT_CONTEXT.md`** - Context for understanding this project
+- **`docs/TRACING.md`** - Langfuse setup
+- **`docs/WEBSEARCH_MIGRATION.md`** - Whoogle → Playwright MCP migration notes
+
+## Common Tasks
+
+### Adding a New Skill
+1. Create folder in `skills-backup/<skillname>/`
+2. Add `SKILL.md` with frontmatter (name, description, allowed-tools)
+3. Add implementation script(s)
+4. Rebuild: `docker compose build`
+
+### Modifying Container Startup
+- Edit `scripts/init-workspace.sh`
+- This creates `~/workspace/.claude/settings.json` inside container
+- Hooks and MCP servers are configured here
+
+### Adding MCP Servers
+Edit `scripts/init-workspace.sh`, add to `mcpServers` section:
+```json
+"mcpServers": {
+  "myserver": {
+    "command": "...",
+    "args": [...]
+  }
+}
+```
+
+### Testing Changes
 ```bash
-# 1. Start your app
-python app.py &
-sleep 2
-
-# 2. Take screenshot and verify UI
-~/.claude/skills/vision/vision.sh verify "http://localhost:5000" \
-    "Should show: a title, input form, and todo list"
-
-# 3. Check the response - fix issues if needed
+docker compose build --no-cache
+./run.sh test-workspace
 ```
 
-## Workflow
+## Important Notes
 
-### 1. Receive Task
-When you receive a task:
-1. Break it into clear tasks using `/tasks`:
-   ```bash
-   ~/.claude/skills/tasks/tasks.sh add "First step"
-   ~/.claude/skills/tasks/tasks.sh add "Second step"
-   ~/.claude/skills/tasks/tasks.sh add "Third step"
-   ```
-2. Mark current task as in-progress
-3. Start working
+1. **Settings hierarchy**: Project-level settings (`workspace/.claude/settings.json`) override user-level (`~/.claude/settings.json`)
 
-### 2. Work Loop
-For each task:
-1. Mark it as working: `~/.claude/skills/tasks/tasks.sh working <number>`
-2. Implement the feature or fix
-3. Verify it works (run tests, check syntax)
-4. **For UI work: use /vision to verify visually**
-5. Mark task complete: `~/.claude/skills/tasks/tasks.sh done <number>`
-6. Move to next task
+2. **Port mappings**: Container ports are mapped with +20000 offset (5000 → 25000)
 
-### 3. Call /supervisor
-At the end of each turn, call `/supervisor` to:
-- Check progress on todos
-- Verify tests pass
-- Get instructions on what to do next
+3. **Skills path**: `skills-backup/` on host → `~/.claude/skills/` in container
 
-```
-[your work here]
+4. **Xvfb**: Container has virtual display for headless browser (Playwright)
 
-Calling supervisor:
-/supervisor
-```
+5. **MCP tools**: Available as `mcp__<server>__<tool>` (e.g., `mcp__playwright__browser_navigate`)
 
-### 4. Follow Instructions
-The supervisor will tell you to either:
-- **Continue** - Keep working on remaining todos
-- **Fix errors** - Tests failed, fix them first
-- **Done** - All complete, wait for user
+## Don't Forget
 
-## Verification
-
-Before marking a task complete:
-
-```bash
-# Check Python syntax
-python3 -m py_compile *.py
-
-# Run tests
-python3 -m pytest -v
-
-# For web apps - VERIFY VISUALLY:
-~/.claude/skills/vision/vision.sh verify "http://localhost:5000" "Describe this page"
-```
-
-## Web Server Binding
-
-**IMPORTANT:** When running web servers, always bind to `0.0.0.0` so the app is accessible from the host machine:
-
-```bash
-# Python http.server
-python3 -m http.server 8000 --bind 0.0.0.0
-
-# Flask
-app.run(host='0.0.0.0', port=5000)
-
-# Node.js/Express
-app.listen(3000, '0.0.0.0')
-
-# FastAPI/Uvicorn
-uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-Do NOT bind to `127.0.0.1` or `localhost` - this prevents access from outside the container.
-
-**Port mappings (container → host):**
-| Container | Host | Use for |
-|-----------|------|---------|
-| 3000 | 23000 | Node.js/React |
-| 5000 | 25000 | Flask |
-| 8000 | 28000 | Django/FastAPI |
-| 8080 | 28080 | General web |
-
-## Available Skills
-
-| Skill | Usage |
-|-------|-------|
-| `/tasks add <description>` | Add a new task |
-| `/tasks list` | Show all tasks with status |
-| `/tasks working <number>` | Mark task as in-progress |
-| `/tasks done <number>` | Mark task as completed |
-| `/tasks status` | Show summary (X of Y complete) |
-| `/vision analyze <image_or_url> <prompt>` | Analyze image file OR screenshot URL |
-| `/vision verify <image_or_url> <expected>` | Verify image/UI matches description |
-| `/vision ocr <image_or_url>` | Extract text from image |
-| `/vision logs` | View recent vision request logs |
-| `/websearch query` | Search the web |
-| `/memory store "text"` | Save for later |
-| `/memory recall "topic"` | Retrieve saved info |
-| `/pkg-install apt/pip pkg` | Install packages |
-
-## Available Subagents
-
-| Agent | Purpose |
-|-------|---------|
-| `debugger` | Investigate errors and bugs |
-| `web-search-subagent` | Research using web search |
-| `code-reviewer` | Review code quality |
-
-## Error Recovery
-
-If something fails:
-1. Read the error message
-2. Try to fix it
-3. If stuck, use the debugger subagent
-4. Continue with next todo
-5. Call `/supervisor`
-
-## Rules
-
-1. **Track tasks** - Use `/tasks` to add, track, and complete tasks
-2. **Keep working** - Don't stop until all tasks complete
-3. **Verify everything** - Run tests AND use vision for UI
-4. **Call /supervisor** - At the end of every turn
-5. **Be honest** - If tests fail or UI looks wrong, fix it first
+- After editing `claude-backup/CLAUDE.md`, changes only apply after `docker compose build`
+- The root `CLAUDE.md` (this file) is gitignored - it's personal to your dev environment
+- Always test changes with a fresh container build

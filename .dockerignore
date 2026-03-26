@@ -1,0 +1,34 @@
+# macOS metadata files
+._*
+.DS_Store
+**/.DS_Store
+**/._*
+
+# Git
+.git
+.gitignore
+
+# Environment (contains secrets)
+.env
+
+# Workspaces (user data, not part of image)
+workspaces/
+
+# Documentation (not needed in image)
+*.md
+!CLAUDE.md
+docs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node
+node_modules/

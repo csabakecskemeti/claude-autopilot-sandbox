@@ -16,6 +16,7 @@ Simple task tracking for the current work session. **Use this for ALL task manag
 | `list` | Show all tasks with status |
 | `done <number>` | Mark task as completed |
 | `working <number>` | Mark task as in-progress |
+| `reset <number>` | Reset task back to pending |
 | `remove <number>` | Remove a task |
 | `clear` | Clear all tasks |
 | `status` | Show summary (X of Y complete) |
@@ -36,6 +37,9 @@ Simple task tracking for the current work session. **Use this for ALL task manag
 
 # Mark as done
 ~/.claude/skills/tasks/tasks.sh done 1
+
+# Reset to pending (for retries)
+~/.claude/skills/tasks/tasks.sh reset 1
 
 # Check status
 ~/.claude/skills/tasks/tasks.sh status
