@@ -1,62 +1,30 @@
 ---
 name: websearch
-description: Search the web using Playwright browser automation (MCP). Use for web research when you need to search Google or browse web pages. Slower than API-based search but bypasses blocking.
-allowed-tools: mcp__playwright__*
+description: Search the web using Playwright browser automation
 ---
 
-# Web Search (Playwright MCP)
+# Web Search
 
-Search the web using real browser automation via the Playwright MCP server.
+Use these Playwright MCP tools for web search:
 
-**Why Playwright?** Google blocks API-like requests from Whoogle/proxies. Using a real browser bypasses this blocking.
+| Tool | Use for |
+|------|---------|
+| `mcp__playwright__browser_navigate` | Go to a URL |
+| `mcp__playwright__browser_snapshot` | Get page content (use this!) |
+| `mcp__playwright__browser_type` | Type text, submit forms |
+| `mcp__playwright__browser_click` | Click elements |
 
-## Available MCP Tools
+**WARNING: Do NOT use `browser_screenshot`** - it returns binary image data that will crash the session.
 
-The `playwright` MCP server provides these tools:
-
-| Tool | Description |
-|------|-------------|
-| `browser_navigate` | Navigate to a URL |
-| `browser_snapshot` | Get page accessibility snapshot (structured content) |
-| `browser_click` | Click an element |
-| `browser_type` | Type text into an element |
-| `browser_screenshot` | Take a screenshot |
-
-## How to Search Google
-
-### Step 1: Navigate to Google
+**To capture screenshots**, save to file then use /vision:
+```javascript
+// Use browser_runjs:
+await page.screenshot({ path: '/home/claude/workspace/screenshot.png' });
 ```
-Use mcp__playwright__browser_navigate with url: "https://www.google.com"
-```
+Then: `~/.claude/skills/vision/vision.sh analyze /home/claude/workspace/screenshot.png "describe"`
 
-### Step 2: Type Search Query
-```
-Use mcp__playwright__browser_type with:
-  - element: "Search" (or the search box identifier from snapshot)
-  - text: "your search query"
-  - submit: true
-```
+## Quick Search
 
-### Step 3: Get Results
-```
-Use mcp__playwright__browser_snapshot to get the page content
-```
-
-## Example Workflow
-
-1. Navigate to Google
-2. Accept cookies if prompted (click "Accept all")
-3. Type search query and submit
-4. Get snapshot of results page
-5. Parse results from the structured accessibility data
-
-## Notes
-
-- **Slower than Whoogle** - Real browser startup + page loads (~5-10s vs ~1s)
-- **More reliable** - Bypasses Google's API blocking
-- **Full browser** - Can handle JavaScript, cookies, consent dialogs
-- **Headless** - Runs without visible window (uses Xvfb)
-
-## Fallback
-
-If MCP tools are unavailable, you can use the `/fetch` skill to retrieve specific URLs directly.
+1. `mcp__playwright__browser_navigate` → `https://www.google.com`
+2. `mcp__playwright__browser_type` → element: "Search", text: "your query", submit: true
+3. `mcp__playwright__browser_snapshot` → read results

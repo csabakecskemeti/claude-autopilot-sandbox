@@ -203,12 +203,26 @@ get_usage() {
     printf '%s' "$msg" | jq -c 'if type == "object" and has("message") then .message.usage // null else null end' 2>/dev/null || echo "null"
 }
 
+# Truncate large content to prevent timeout on huge MCP responses
+truncate_content() {
+    local content="$1"
+    local max_len="${2:-10000}"  # Default 10KB max
+
+    local len=${#content}
+    if [ "$len" -gt "$max_len" ]; then
+        echo "${content:0:$max_len}... [TRUNCATED: ${len} chars total]"
+    else
+        echo "$content"
+    fi
+}
+
 # Find tool result
 find_tool_result() {
     local tool_id="$1"
     local tool_results="$2"
 
-    printf '%s' "$tool_results" | jq -r --arg id "$tool_id" '
+    local result
+    result=$(printf '%s' "$tool_results" | jq -r --arg id "$tool_id" '
         first(
             .[] |
             (if type == "object" and has("message") then .message.content elif type == "object" then .content else null end) as $content |
@@ -226,7 +240,10 @@ find_tool_result() {
                 empty
             end
         ) // "No result"
-    '
+    ')
+
+    # Truncate large tool results (MCP responses can be huge)
+    truncate_content "$result" 10000
 }
 
 # Merge assistant message parts (for SSE streaming)
@@ -374,8 +391,9 @@ create_trace() {
     local gen_event_id
     gen_event_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
-    # Clean up output (remove trailing \n)
+    # Clean up output (remove trailing \n) and truncate if too large
     all_output=$(echo -e "$all_output" | sed 's/\\n$//')
+    all_output=$(truncate_content "$all_output" 20000)
 
     local gen_event
     gen_event=$(jq -n \
@@ -608,6 +626,11 @@ main() {
     msg_count=$(echo "$new_messages" | wc -l)
     log "INFO" "Found $msg_count new messages"
 
+    # Estimate processing time for large transcripts
+    if [ "$msg_count" -gt 50 ]; then
+        log "WARN" "Large transcript ($msg_count messages) - processing may take a while"
+    fi
+
     # Group into turns
     local current_user=""
     local current_assistants="[]"
@@ -645,6 +668,7 @@ main() {
                 if [ -n "$current_user" ] && [ "$(printf '%s' "$current_assistants" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
                     turns=$((turns + 1))
                     local turn_num=$((turn_count + turns))
+                    log "INFO" "Processing turn $turn_num..."
                     create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
                 fi
 
@@ -685,6 +709,7 @@ main() {
     if [ -n "$current_user" ] && [ "$(printf '%s' "$current_assistants" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
         turns=$((turns + 1))
         local turn_num=$((turn_count + turns))
+        log "INFO" "Processing final turn $turn_num..."
         create_trace "$session_id" "$turn_num" "$current_user" "$current_assistants" "$current_tool_results" || true
     fi
 
@@ -709,7 +734,51 @@ main() {
     log "INFO" "Processed $turns turns in ${duration}s"
 }
 
+# Check if task is complete - uses marker file written by supervisor skill
+check_auto_continue() {
+    local transcript_path="$1"
+    local workspace_dir="$2"
+
+    # Check if supervisor wrote the completion marker file
+    # This is more reliable than grepping transcript (avoids matching code content)
+    local is_complete="false"
+    local marker_file="$workspace_dir/.supervisor_complete"
+
+    if [ -f "$marker_file" ]; then
+        is_complete="true"
+        log "INFO" "Found completion marker: $marker_file"
+        # Clean up the marker file after reading
+        rm -f "$marker_file" 2>/dev/null
+    fi
+
+    log "INFO" "Auto-continue check: is_complete=$is_complete (marker_file=$marker_file)"
+
+    local flag_file="$workspace_dir/.claude_continue_flag"
+
+    if [ "$is_complete" = "true" ]; then
+        log "INFO" "Task completed - no auto-continue needed"
+        rm -f "$flag_file" 2>/dev/null
+        return 0
+    else
+        log "INFO" "Task not complete - triggering auto-continue"
+
+        # Write flag for run.sh to detect (NO stdout - it interferes with Claude Code!)
+        echo "CONTINUE_NEEDED" > "$flag_file"
+        echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$flag_file"
+
+        return 1
+    fi
+}
+
 # Run main
 main
+
+# After tracing, check if auto-continue is needed
+WORKSPACE_DIR=$(echo "$STDIN_CONTENT" | jq -r '.cwd // ""')
+TRANSCRIPT=$(echo "$STDIN_CONTENT" | jq -r '.transcript_path // ""' | sed "s|^~|$HOME|")
+
+if [ -n "$WORKSPACE_DIR" ] && [ -n "$TRANSCRIPT" ]; then
+    check_auto_continue "$TRANSCRIPT" "$WORKSPACE_DIR"
+fi
 
 exit 0

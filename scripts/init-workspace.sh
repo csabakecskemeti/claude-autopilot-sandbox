@@ -4,6 +4,13 @@
 
 set -e
 
+# Start Xvfb for headless browser support (Playwright MCP)
+if ! pgrep -x Xvfb > /dev/null; then
+    Xvfb :99 -screen 0 1920x1080x24 &
+    export DISPLAY=:99
+    echo "Started Xvfb on display :99"
+fi
+
 WORKSPACE_DIR="${HOME}/workspace"
 CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
 
@@ -16,7 +23,7 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
 {
   "permissions": {
     "allow": ["*"],
-    "deny": ["WebSearch", "WebFetch", "EnterPlanMode"]
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "mcp__playwright__browser_screenshot"]
   },
   "hooks": {
     "Stop": [
@@ -25,7 +32,7 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
           {
             "type": "command",
             "command": "${HOME}/.claude/hooks/langfuse_stop_hook.sh",
-            "timeout": 60
+            "timeout": 300
           }
         ]
       }
@@ -58,6 +65,13 @@ mkdir -p "${HOME}/.claude/state"
 
 # Verify hook script is executable
 chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
+
+# Add Playwright MCP server via CLI (settings.json mcpServers doesn't work)
+# This registers it in ~/.claude.json which Claude Code actually reads
+if ! claude mcp list 2>/dev/null | grep -q "playwright"; then
+    echo "Adding Playwright MCP server..."
+    claude mcp add playwright --env DISPLAY=:99 -- npx @playwright/mcp 2>/dev/null || true
+fi
 
 echo "Workspace initialization complete"
 echo "Hook script: ${HOME}/.claude/hooks/langfuse_stop_hook.sh"

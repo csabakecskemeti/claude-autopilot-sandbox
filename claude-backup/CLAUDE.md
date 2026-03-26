@@ -37,11 +37,6 @@ You are running in a self-contained Docker sandbox with full permissions. You ha
 
 ## Available Capabilities
 
-**Native Tools vs Skills:**
-- **Native tools** (Read, Write, Edit, Bash, Glob, Grep) → Call directly
-- **Skills** (/tasks, /vision, /fetch, etc.) → Call via Bash: `~/.claude/skills/<name>/<script>`
-- **MCP tools** (mcp__playwright__*) → Call directly with mcp__ prefix
-
 ### Task Tracking (`/tasks`)
 Track your work plan. Add tasks, mark progress, check status.
 ```bash
@@ -56,13 +51,10 @@ Evaluates your work. Checks tasks, tests, verification. Tells you to continue or
 
 ### Vision (`/vision`)
 See images and screenshots. Analyze UIs, verify visual output, OCR.
-
-**IMPORTANT:** Vision is a BASH SKILL, not a native tool. Call it via Bash:
 ```bash
 ~/.claude/skills/vision/vision.sh analyze <image_or_url> "prompt"
 ~/.claude/skills/vision/vision.sh verify <url> "expected elements"
 ```
-Do NOT try to call `Vision` as a tool directly - it will fail with "No such tool".
 
 ### Web Search (Playwright MCP)
 Browser automation for web research. No external services needed.
@@ -73,7 +65,15 @@ Browser automation for web research. No external services needed.
 | `mcp__playwright__browser_type` | Type text, submit forms |
 | `mcp__playwright__browser_click` | Click elements |
 | `mcp__playwright__browser_snapshot` | Get page content |
-| `mcp__playwright__browser_screenshot` | Capture screenshot |
+
+**⚠️ Do NOT use `browser_screenshot`** - returns binary data that crashes the session.
+
+**To capture screenshots:**
+```javascript
+// Use browser_runjs to save screenshot to file
+await page.screenshot({ path: '/home/claude/workspace/screenshot.png' });
+```
+Then analyze with: `~/.claude/skills/vision/vision.sh analyze /home/claude/workspace/screenshot.png "describe what you see"`
 
 ### Fetch (`/fetch`)
 Download URLs to local files. Useful for documentation, assets.
@@ -126,3 +126,5 @@ Query SQLite or PostgreSQL databases.
 - **NEVER** use `EnterPlanMode` (requires user approval)
 - **NEVER** ask "Should I proceed?" - just work
 - **NEVER** stop until supervisor says "ALL COMPLETE"
+- **NEVER** use `Read` on image files (PNG, JPG, etc.) - crashes session. Use `/vision` instead
+- **NEVER** use `mcp__playwright__browser_screenshot` - crashes session. Use `browser_snapshot` or save to file + `/vision`

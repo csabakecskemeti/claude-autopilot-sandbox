@@ -246,6 +246,97 @@ All tests pass. UI verified with vision. Calling supervisor for final evaluation
 [Supervisor confirms completion]
 ```
 
+## Example: Zero-Shot Platformer Game
+
+This example shows the full autonomous workflow building a complete 2D platformer game from a single prompt.
+
+### Setup
+
+**User Prompt:** `accomplish TASK.md`
+
+The TASK.md file contained detailed requirements for a web-based platformer game with:
+- 10+ progressively harder levels
+- Player movement, jumping, shooting
+- Enemy AI and collision detection
+- Cyberpunk theme with real sprites (not colored rectangles)
+- Visual verification of the final result
+
+**Model Configuration:**
+| Component | Model | Hardware |
+|-----------|-------|----------|
+| LLM | `qwen/qwen3.5-35b-a3b` | NVIDIA DGX Spark |
+| Vision | `qwen/qwen3-vl-4b` | NVIDIA DGX Spark |
+
+**Total Time:** 1 hour 9 minutes (fully autonomous)
+
+### What the Agent Did
+
+1. **Planning Phase** - Broke down the project into components:
+   - Rendering engine, physics system, input handling
+   - Game state management, level design
+   - Asset generation (procedural sprites)
+
+2. **Implementation** - Created the game structure:
+   - `index.html` - Game canvas and UI overlay
+   - `styles.css` - Cyberpunk neon styling
+   - `main.js` - Full game engine with 10 levels
+   - `assets/sprites/` - Procedurally generated pixel art
+
+3. **Visual Verification** - Used `/vision verify` to confirm UI:
+
+   ```
+   /vision verify http://localhost:8080 "Should show CYBER-RUNNER title,
+   NEON PROTOCOL subtitle, story text, controls info, and START MISSION button"
+   ```
+
+   Vision response:
+   ```
+   1. PASS
+
+   2. What you actually see:
+   - The screen displays "CYBER-RUNNER" in large, glowing teal letters
+   - Below it, "NEON PROTOCOL" is shown in a smaller, matching font
+   - Story text: "The year is 2087. The city has fallen to the AI..."
+   - A "CONTROLS:" box lists: "→ Move | SPACE / ↑ Jump | SHIFT Shoot"
+   - A prominent "START MISSION" button is centered below
+
+   3. No issues — all expected elements are present and correctly formatted.
+   ```
+
+4. **Supervisor Loop** - Continuously evaluated progress until complete
+
+### Final Result
+
+**Start Screen:**
+
+![Platformer game start screen](assets/zero-shot-platformer-game1.png)
+
+**Gameplay:**
+
+![Platformer game gameplay](assets/zero-shot-platformer-game2.png)
+
+### Vision Verification Logs
+
+All vision requests were automatically logged to `.vision_logs/`:
+
+```
+.vision_logs/
+├── 2026-03-23_20-41-29_analyze.md    # Initial UI analysis
+├── 2026-03-23_20-43-16_analyze.md    # Start screen verification
+├── 2026-03-23_20-43-16_analyze.png   # Screenshot
+├── 2026-03-23_20-56-51_verify.md     # Full UI verification (PASS)
+├── 2026-03-23_20-56-51_verify.png    # Screenshot
+├── 2026-03-23_20-58-25_verify.md     # Final verification (PASS)
+└── 2026-03-23_20-58-25_verify.png    # Screenshot
+```
+
+### Key Takeaways
+
+1. **Zero-shot capability** - Complex game built from a single task file
+2. **Self-verification** - Agent used vision to confirm UI matched requirements
+3. **Autonomous completion** - No human intervention for 1+ hour
+4. **Quality output** - Playable game with proper sprites, not placeholders
+
 ## Tracing with Langfuse
 
 Track and evaluate agent sessions using Langfuse. This helps you understand agent behavior, debug issues, and measure performance.

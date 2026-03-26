@@ -49,7 +49,14 @@ Based on the task status above:
 
 ## When Done
 
-Output a summary:
+**IMPORTANT:** When declaring complete, you MUST write the completion marker file:
+
+```bash
+# Write completion marker (REQUIRED for auto-continue to detect completion)
+echo "COMPLETE $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORKSPACE/.supervisor_complete"
+```
+
+Then output a summary:
 ```
 ALL COMPLETE
 
