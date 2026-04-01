@@ -60,12 +60,13 @@ RUN pip3 install --break-system-packages \
     beautifulsoup4 \
     playwright
 
-# Install Playwright browsers
-RUN playwright install chromium
+# Install Playwright browsers AND all system dependencies
+RUN playwright install chromium && playwright install-deps chromium
 
-# Install Playwright MCP server for web search capability
-# This provides browser automation that bypasses Google API blocking
-RUN npm install -g @playwright/mcp
+# Install Playwright CLI for browser automation
+# CLI saves screenshots to files (not binary in response) - works better with LLMs
+# See: https://testcollab.com/blog/playwright-cli
+RUN npm install -g @playwright/cli
 
 # Create non-root user with sudo access
 RUN useradd -m -s /bin/bash claude \

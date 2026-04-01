@@ -2,6 +2,46 @@
 
 All notable changes to Claude Autopilot Sandbox will be documented in this file.
 
+## [1.1.0] - 2026-03-25
+
+### Added
+- **Browser Skill** (`/browser`) - New skill wrapping Playwright CLI
+  - Screenshots save to files (no binary in response)
+  - 4x fewer tokens vs MCP approach
+  - Commands: navigate, snapshot, click, type, screenshot
+- **QA Agent** (`qa-agent`) - Verifies test coverage before supervisor
+  - Runs in isolated context
+  - Checks requirements coverage, UI verification, edge cases
+  - Returns VERIFIED or GAPS FOUND
+- **Task Completion Loop** - Documented full workflow
+  - plan → tasks → work → test → qa-agent → supervisor
+  - See `docs/TASK_COMPLETION_LOOP.md`
+- **TODO.md** - Project-level todo tracking with dates and status
+
+### Fixed
+- **Hook Timeout** - Increased from 60s to 300s for large transcripts
+- **Hook Content Truncation** - Tool results capped at 10KB, outputs at 20KB
+- **Session Crashes** - Replaced MCP with CLI (MCP returned binary data that crashed local LLMs)
+- **Extended Thinking Error** - Added `MAX_THINKING_TOKENS=0` for local LLM compatibility
+
+### Changed
+- **Playwright MCP → CLI** - Switched from `@playwright/mcp` to `@playwright/cli`
+  - CLI saves screenshots to files instead of returning binary in response
+  - Designed specifically for AI coding agents with filesystem access
+- **Websearch Skill** - Now uses `/browser` skill (Playwright CLI)
+- **Web-Researcher Subagent** - Updated to use `/browser` skill
+- **CLAUDE.md** - Replaced MCP instructions with `/browser` skill usage
+- **Supervisor** - Uses marker file for completion detection
+
+### Removed
+- **Playwright MCP** - Removed MCP server registration (replaced by CLI)
+- **Whoogle Websearch** - Removed `websearch-whoogle-backup/` skill
+- **Deprecated Skills** - Removed `/notes`, `/code-runner`, `/api-tester` (unused)
+
+### Infrastructure
+- **Xvfb** - Starts automatically for headless browser
+- **Dockerfile** - Installs `@playwright/cli` instead of `@playwright/mcp`
+
 ## [1.0.0] - 2026-03-21
 
 ### Added

@@ -17,6 +17,7 @@ You are a fully capable worker agent with the same powers as the main agent. You
 ### Skills (invoke via bash)
 | Skill | Command | Purpose |
 |-------|---------|---------|
+| `/workflow` | `~/.claude/skills/workflow/workflow.sh` | Track workflow state |
 | `/tasks` | `~/.claude/skills/tasks/tasks.sh` | Track your work |
 | `/vision` | `~/.claude/skills/vision/vision.sh` | Analyze images, verify UI |
 | `/fetch` | `~/.claude/skills/fetch/fetch.py` | Download URLs to files |
@@ -25,19 +26,23 @@ You are a fully capable worker agent with the same powers as the main agent. You
 | `/file-convert` | `~/.claude/skills/file-convert/` | Convert file formats |
 | `/sql-query` | `~/.claude/skills/sql-query/` | Query databases |
 
-### MCP Tools (Playwright Browser)
-| Tool | Purpose |
-|------|---------|
-| `mcp__playwright__browser_navigate` | Go to URL |
-| `mcp__playwright__browser_type` | Type text, submit forms |
-| `mcp__playwright__browser_click` | Click elements |
-| `mcp__playwright__browser_snapshot` | Get page content/accessibility tree |
-| `mcp__playwright__browser_screenshot` | Capture screenshot |
+### Browser Automation
+Use `playwright-cli` directly for web automation:
+```bash
+playwright-cli open "https://example.com"       # Open browser
+playwright-cli browser_snapshot                 # Get page content with refs
+playwright-cli click e21                        # Click element
+playwright-cli type e35 "text"                  # Type in element
+playwright-cli screenshot --filename="$HOME/workspace/shot.png"
+playwright-cli close                            # Close when done
+```
+Run `playwright-cli --help` for all commands.
 
 ### Subagents You Can Spawn
 - `debugger` - Deep error investigation
 - `web-researcher` - Multi-source web research
 - `code-reviewer` - Quality/security review
+- `qa-agent` - Test coverage verification
 
 ## Guidelines
 
