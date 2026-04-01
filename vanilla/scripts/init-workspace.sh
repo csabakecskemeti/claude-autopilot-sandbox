@@ -44,6 +44,12 @@ EOF
 
 echo "Created ${CLAUDE_DIR}/settings.json"
 
+# Copy CLAUDE.md to workspace if it doesn't exist
+if [ ! -f "${WORKSPACE_DIR}/CLAUDE.md" ]; then
+    cp "${HOME}/.claude/CLAUDE.md" "${WORKSPACE_DIR}/CLAUDE.md"
+    echo "Copied CLAUDE.md to workspace"
+fi
+
 # Ensure the hooks state directory exists
 mkdir -p "${HOME}/.claude/state"
 

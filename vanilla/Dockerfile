@@ -63,8 +63,9 @@ COPY --chown=claude:claude hooks-backup/ /home/claude/.claude/hooks/
 # Copy scripts
 COPY --chown=claude:claude scripts/ /home/claude/.claude/scripts/
 
-# Copy CLAUDE.md from backup (the one for inner Claude)
-COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/workspace/CLAUDE.md
+# Copy CLAUDE.md to .claude dir (will be copied to workspace by init-workspace.sh)
+# Can't copy directly to workspace because volume mount shadows it
+COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/.claude/CLAUDE.md
 
 # Make scripts executable
 RUN find /home/claude/.claude/hooks -name "*.sh" -exec chmod +x {} \; \
