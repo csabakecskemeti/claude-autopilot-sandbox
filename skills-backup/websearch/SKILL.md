@@ -1,30 +1,58 @@
 ---
 name: websearch
-description: Search the web using Playwright browser automation
+description: Free web search using DuckDuckGo. No API key required. Falls back to Playwright if needed.
 ---
 
 # Web Search
 
-Use these Playwright MCP tools for web search:
+Free, independent web search. No API keys needed.
 
-| Tool | Use for |
-|------|---------|
-| `mcp__playwright__browser_navigate` | Go to a URL |
-| `mcp__playwright__browser_snapshot` | Get page content (use this!) |
-| `mcp__playwright__browser_type` | Type text, submit forms |
-| `mcp__playwright__browser_click` | Click elements |
+## Usage
 
-**WARNING: Do NOT use `browser_screenshot`** - it returns binary image data that will crash the session.
-
-**To capture screenshots**, save to file then use /vision:
-```javascript
-// Use browser_runjs:
-await page.screenshot({ path: '/home/claude/workspace/screenshot.png' });
+```bash
+~/.claude/skills/websearch/websearch.py "your search query"
+~/.claude/skills/websearch/websearch.py "your search query" 5   # limit to 5 results
 ```
-Then: `~/.claude/skills/vision/vision.sh analyze /home/claude/workspace/screenshot.png "describe"`
 
-## Quick Search
+## Example
 
-1. `mcp__playwright__browser_navigate` → `https://www.google.com`
-2. `mcp__playwright__browser_type` → element: "Search", text: "your query", submit: true
-3. `mcp__playwright__browser_snapshot` → read results
+```bash
+~/.claude/skills/websearch/websearch.py "Python async tutorial"
+```
+
+Output:
+```
+Searching DuckDuckGo for: Python async tutorial
+============================================================
+
+## 1. Async IO in Python: A Complete Walkthrough
+**URL:** https://realpython.com/async-io-python/
+This tutorial covers async IO in Python with examples...
+
+## 2. Python Asyncio Tutorial
+**URL:** https://docs.python.org/3/library/asyncio.html
+...
+
+============================================================
+Found 10 results.
+```
+
+## Fallback: Playwright
+
+If DuckDuckGo search fails (rate limit, network issues), use Playwright:
+
+```bash
+playwright-cli open "https://duckduckgo.com"
+playwright-cli browser_snapshot
+playwright-cli type e12 "your search query"
+playwright-cli click e15
+playwright-cli browser_snapshot
+playwright-cli close
+```
+
+## Features
+
+- **Free** - No API keys, no costs
+- **Private** - Uses DuckDuckGo
+- **Reliable** - Python library, not scraping
+- **Fallback** - Playwright if primary fails

@@ -20,6 +20,8 @@ services:
     environment:
       - ANTHROPIC_BASE_URL=http://${LLM_HOST:?Set LLM_HOST in .env}:${LLM_PORT:-11234}
       - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      # Disable extended thinking (local LLMs don't support it)
+      - MAX_THINKING_TOKENS=0
       - WHOOGLE_URL=${WHOOGLE_URL:-}
       # Vision model config (uses same backend as LLM)
       - VISION_API_URL=http://${LLM_HOST}:${LLM_PORT:-11234}

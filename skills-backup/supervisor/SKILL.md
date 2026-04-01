@@ -1,65 +1,106 @@
 ---
 name: supervisor
-description: Check task progress and decide next action. Call after completing implementation work.
-allowed-tools: Bash, Read
+description: MANDATORY final step. Validates all workflow requirements before allowing completion.
+allowed-tools: Bash, Read, Task
 ---
 
-# Supervisor Check
+# Supervisor - Completion Validator
 
-## Current Task Status
+**You called /supervisor. Now I will check if you can stop.**
 
+---
+
+## Checklist Verification
+
+### 1. Task Status
 !`~/.claude/skills/tasks/tasks.sh list 2>&1`
 
 !`~/.claude/skills/tasks/tasks.sh status 2>&1`
 
+### 2. Workflow State
+!`~/.claude/skills/workflow/workflow.sh status 2>&1`
+
+### 3. Vision Verification (if UI project)
+!`ls -la ~/.vision_logs/*.md 2>/dev/null | tail -5 || echo "No vision logs found"`
+
+!`cat $(ls -t ~/workspace/.vision_logs/*_verify.md 2>/dev/null | head -1) 2>/dev/null || echo "No vision verify results"`
+
 ---
 
-## Your Job Now
+## Completion Requirements
 
-Based on the task status above:
+**ALL of these must be true before you can stop:**
 
-1. **If tasks remain incomplete** → Continue working on the next pending task
-2. **If all tasks complete** → Verify the work meets the original request
-3. **If UI project** → Run `/vision verify` to check visually before declaring done
+| # | Requirement | How to Check |
+|---|-------------|--------------|
+| 1 | All tasks marked `[x]` | No `[ ]` or `[>]` in task list |
+| 2 | Vision verify PASS | Latest .vision_logs/*_verify.md shows "PASS" (if UI project) |
+| 3 | No failing tests | Test output shows all passing |
+| 4 | Original request fulfilled | All requested features implemented |
 
-## Decision Guide
+---
 
-| Status | Action |
-|--------|--------|
-| Tasks pending | Mark next as working, continue implementing |
-| All complete, no UI | Declare done, summarize what was built |
-| All complete, has UI | Run `/vision verify` first, then declare done |
-| Tests failing | Add fix tasks, continue working |
+## Decision Logic
 
-## Quick Commands
+```
+IF any task is [ ] or [>]:
+    → CONTINUE: "Complete task N first"
 
-```bash
-# Mark task as working
-~/.claude/skills/tasks/tasks.sh working <num>
+IF UI project AND (no vision log OR vision shows FAIL):
+    → CONTINUE: "Run /vision verify and fix until PASS"
 
-# Mark task as done
-~/.claude/skills/tasks/tasks.sh done <num>
+IF tests were run AND any failed:
+    → CONTINUE: "Fix failing tests"
 
-# Add new task if issues found
-~/.claude/skills/tasks/tasks.sh add "Fix: <issue>"
-
-# Clear tasks when fully complete
-~/.claude/skills/tasks/tasks.sh clear
+IF all checks pass:
+    → Call qa-agent to verify test coverage
+    → IF qa-agent returns GAPS: Add tasks and CONTINUE
+    → IF qa-agent returns VERIFIED: Proceed to completion
 ```
 
-## When Done
+---
 
-**IMPORTANT:** When declaring complete, you MUST write the completion marker file:
+## Your Action Now
 
-```bash
-# Write completion marker (REQUIRED for auto-continue to detect completion)
-echo "COMPLETE $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$WORKSPACE/.supervisor_complete"
+Based on the checklist above, determine:
+
+### If NOT ready (any check fails):
+
+Output exactly:
+```
+CONTINUE
+
+Reason: [what failed]
+Action: [what to do next]
 ```
 
-Then output a summary:
+Then continue working - do NOT stop.
+
+### If ALL checks pass:
+
+1. First call qa-agent subagent to verify test coverage
+2. If qa-agent finds gaps, add tasks and continue
+3. Only if qa-agent says VERIFIED, then output:
+
 ```
 ALL COMPLETE
 
-Built: [what was created]
-Verified: [tests/vision status]
+Summary: [what was built]
+Tasks: [N] completed
+Vision: PASS
+QA: VERIFIED
 ```
+
+And write the completion marker:
+```bash
+echo "COMPLETE $(date -u +%Y-%m-%dT%H:%M:%SZ)" > ~/workspace/.supervisor_complete
+```
+
+---
+
+## CRITICAL RULES
+
+- **NEVER output "ALL COMPLETE" if any task is incomplete**
+- **NEVER output "ALL COMPLETE" if vision shows FAIL**
+- **NEVER output "ALL COMPLETE" without calling qa-agent first**
+- **If in doubt, output CONTINUE and keep working**
