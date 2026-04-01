@@ -1,0 +1,37 @@
+services:
+  claude:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-vanilla-${WORKSPACE_NAME:-default}
+    stdin_open: true
+    tty: true
+    environment:
+      # Anthropic API (required)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+      # Model selection
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+
+      # Langfuse tracing (optional)
+      - TRACE_TO_LANGFUSE=${TRACE_TO_LANGFUSE:-false}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-vanilla}
+      - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
+    volumes:
+      # Mount workspace
+      - ${WORKSPACE_PATH:-./workspaces/default}:/home/claude/workspace
+
+    # Port mappings (if running web servers)
+    # Uses 30000 range (internal 8000 -> external 38000)
+    ports:
+      - "38000:8000"
+      - "38080:8080"
+      - "33000:3000"
+      - "35000:5000"
+
+    # Access host services
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
