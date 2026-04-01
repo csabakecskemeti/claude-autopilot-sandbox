@@ -1,67 +1,58 @@
 ---
 name: websearch
-description: Search the web using browser automation
+description: Free web search using DuckDuckGo. No API key required. Falls back to Playwright if needed.
 ---
 
 # Web Search
 
-Use `playwright-cli` directly for web searches.
+Free, independent web search. No API keys needed.
 
-## Quick Search
+## Usage
 
 ```bash
-# 1. Open browser and go to Google
-playwright-cli open "https://google.com"
-
-# 2. Get page snapshot (find search box ref)
-playwright-cli browser_snapshot
-# Look for: textbox "Search" [ref=e35]
-
-# 3. Type your query
-playwright-cli type e35 "your search query"
-
-# 4. Click search button
-playwright-cli click e21
-
-# 5. Get results
-playwright-cli browser_snapshot
+~/.claude/skills/websearch/websearch.py "your search query"
+~/.claude/skills/websearch/websearch.py "your search query" 5   # limit to 5 results
 ```
 
-## Reading a Page
+## Example
 
 ```bash
-# Click on a search result link
-playwright-cli click e42
+~/.claude/skills/websearch/websearch.py "Python async tutorial"
+```
 
-# Get page content
+Output:
+```
+Searching DuckDuckGo for: Python async tutorial
+============================================================
+
+## 1. Async IO in Python: A Complete Walkthrough
+**URL:** https://realpython.com/async-io-python/
+This tutorial covers async IO in Python with examples...
+
+## 2. Python Asyncio Tutorial
+**URL:** https://docs.python.org/3/library/asyncio.html
+...
+
+============================================================
+Found 10 results.
+```
+
+## Fallback: Playwright
+
+If DuckDuckGo search fails (rate limit, network issues), use Playwright:
+
+```bash
+playwright-cli open "https://duckduckgo.com"
 playwright-cli browser_snapshot
-
-# Navigate to a different URL
-playwright-cli goto "https://example.com"
-```
-
-## Taking Screenshots
-
-```bash
-# Save screenshot to file
-playwright-cli screenshot --filename="$HOME/workspace/search-results.png"
-
-# Analyze with vision
-~/.claude/skills/vision/vision.sh analyze "$HOME/workspace/search-results.png" "describe"
-```
-
-## Close Browser
-
-```bash
-# Always close when done
+playwright-cli type e12 "your search query"
+playwright-cli click e15
+playwright-cli browser_snapshot
 playwright-cli close
 ```
 
-## Tips
+## Features
 
-- **Always `open` first** - Other commands need an open browser
-- `browser_snapshot` returns YAML with element refs (e21, e35, etc.)
-- Use those refs with `click` and `type` commands
-- Screenshots save to files (no binary in response)
-- Run `playwright-cli --help` for all commands
-- For complex research, use the `web-researcher` subagent
+- **Free** - No API keys, no costs
+- **Private** - Uses DuckDuckGo
+- **Reliable** - Python library, not scraping
+- **Fallback** - Playwright if primary fails

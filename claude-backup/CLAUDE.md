@@ -106,18 +106,25 @@ See images and screenshots. Analyze UIs, verify visual output, OCR.
 ~/.claude/skills/vision/vision.sh verify <url> "expected elements"
 ```
 
-### Browser Automation (`/browser`)
-Use `playwright-cli` directly for web automation. Screenshots save to files (safe for LLMs).
+### Web Search (`/websearch`)
+Free web search using DuckDuckGo. No API key needed.
 ```bash
-playwright-cli open "https://google.com"              # Open browser
+~/.claude/skills/websearch/websearch.py "your search query"
+~/.claude/skills/websearch/websearch.py "query" 5    # limit results
+```
+Falls back to Playwright if DuckDuckGo fails.
+
+### Browser Automation (`/browser`)
+Use `playwright-cli` for page interaction, screenshots, form filling. **For search, use `/websearch` instead.**
+```bash
+playwright-cli open "https://example.com"             # Open browser
 playwright-cli browser_snapshot                       # Get page as YAML with refs
-playwright-cli type e35 "query"                       # Type in element
+playwright-cli type e35 "text"                        # Type in element
 playwright-cli click e21                              # Click element
-playwright-cli goto "https://other-url.com"           # Navigate to new page
 playwright-cli screenshot --filename="$HOME/workspace/shot.png"
 playwright-cli close                                  # Close when done
 ```
-Run `playwright-cli --help` for all commands. Analyze screenshots with `/vision`.
+Run `playwright-cli --help` for all commands.
 
 ### Fetch (`/fetch`)
 Download URLs to local files. Useful for documentation, assets.

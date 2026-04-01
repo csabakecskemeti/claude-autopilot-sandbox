@@ -58,7 +58,8 @@ RUN pip3 install --break-system-packages \
     pandas \
     requests \
     beautifulsoup4 \
-    playwright
+    playwright \
+    duckduckgo-search
 
 # Install Playwright browsers AND all system dependencies
 RUN playwright install chromium && playwright install-deps chromium
