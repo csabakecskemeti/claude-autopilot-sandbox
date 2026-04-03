@@ -46,6 +46,15 @@ Available subagents (in `~/.claude/agents/`):
 - `qa-agent` - Test coverage verification
 - `worker` - Parallel task execution
 
+### Browser Automation
+Playwright with Chromium is pre-installed for:
+- Taking screenshots of web apps
+- Visual verification of built UIs
+- Form filling and web interaction
+- Web scraping
+
+See `~/.claude/skills/browser/SKILL.md` for examples.
+
 ### Langfuse Tracing (Optional)
 Enable tracing to monitor Claude's activity:
 
@@ -108,7 +117,8 @@ When running a web server in the container, bind to `0.0.0.0` and access via the
 | API | LM Studio/Ollama | Anthropic |
 | Web Search | DuckDuckGo skill | Native WebSearch |
 | Vision | LM Studio vision | Not available |
-| Skills | Many custom skills | Native tools |
+| Browser | Playwright | Playwright |
+| Skills | Many custom skills | Native tools + browser |
 | Tracing | Langfuse | Langfuse |
 
 ## Building

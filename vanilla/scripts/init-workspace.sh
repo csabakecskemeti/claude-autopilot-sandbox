@@ -1,8 +1,15 @@
 #!/bin/bash
 # Initialize workspace for Vanilla Claude Code
-# Sets up tracing hooks (native tools are allowed)
+# Sets up tracing hooks, Xvfb for browser automation
 
 set -e
+
+# Start Xvfb virtual display for Playwright (headless browser)
+if ! pgrep -x "Xvfb" > /dev/null; then
+    Xvfb :99 -screen 0 1280x720x24 &
+    sleep 1
+    echo "Started Xvfb virtual display on :99"
+fi
 
 WORKSPACE_DIR="${HOME}/workspace"
 CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
@@ -58,3 +65,4 @@ chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
 
 echo "Workspace initialization complete (vanilla mode)"
 echo "Native tools enabled: WebSearch, WebFetch, TodoWrite, EnterPlanMode"
+echo "Browser automation: Playwright with Chromium (Xvfb on :99)"

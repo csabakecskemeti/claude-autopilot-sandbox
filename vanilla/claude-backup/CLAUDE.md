@@ -47,6 +47,21 @@ You have access to all native Claude Code tools:
 - **Bash** - Run shell commands
 - **Task** - Spawn subagents
 
+### Browser Automation
+Use Python Playwright for screenshots and web interaction:
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={'width': 1280, 'height': 720})
+    page.goto('http://localhost:8000', wait_until='networkidle')
+    page.screenshot(path='screenshot.png')
+    browser.close()
+"
+```
+See `~/.claude/skills/browser/SKILL.md` for more examples.
+
 ## Subagents
 
 | Agent | When to use |
