@@ -1,11 +1,12 @@
 services:
-  claude-local:
+  # Main Claude agent container
+  agent:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         - LLM_MODEL=${LLM_MODEL:?Set LLM_MODEL in .env}
-    container_name: claude-local-llm
+    container_name: claude-agent
 
     # Port mappings - expose common development ports to host
     # This allows accessing apps running in the container from your browser
@@ -36,16 +37,27 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
+      # Supervisor URL and timeout (for stop hook)
+      - SUPERVISOR_URL=http://supervisor:8080
+      - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
+      # Initial task (passed from run.sh)
+      - ORIGINAL_TASK=${ORIGINAL_TASK:-}
 
     # Volume mounts - only workspace, no config mounts
     volumes:
       # Main workspace - use WORKSPACE_PATH env var for custom location
       # Set WORKSPACE_BASE in .env to use internal drive (avoid exFAT issues)
       - ${WORKSPACE_PATH:-./workspaces/default}:/home/claude/workspace
+      # Immutable task storage (read-only - neither agent nor supervisor can modify)
+      - ${TASK_STORAGE:-./workspaces/default-task}:/task:ro
 
     # Keep container running for interactive use
     stdin_open: true
     tty: true
+
+    # Network for communication with supervisor
+    networks:
+      - agentnet
 
     # Resource limits
     deploy:
@@ -54,3 +66,80 @@ services:
           memory: ${MEMORY_LIMIT:-16G}
         reservations:
           memory: ${MEMORY_RESERVATION:-2G}
+
+    # Supervisor must be running for agent to work
+    depends_on:
+      supervisor:
+        condition: service_healthy
+
+  # External Supervisor container - Agent-based QA validator
+  # Uses Claude Code CLI to evaluate agent's work
+  # Has READ-ONLY access to agent workspace
+  supervisor:
+    build:
+      context: ./supervisor
+      dockerfile: Dockerfile
+    container_name: claude-supervisor
+
+    # Environment variables
+    environment:
+      # LLM configuration (same backend as agent)
+      - ANTHROPIC_BASE_URL=http://${LLM_HOST:?Set LLM_HOST in .env}:${LLM_PORT:-11234}
+      - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      - LLM_MODEL=${LLM_MODEL:-}
+      # Disable extended thinking (local LLMs don't support it)
+      - MAX_THINKING_TOKENS=0
+      # Vision model config (same as agent - for screenshot analysis)
+      - VISION_API_URL=http://${LLM_HOST}:${LLM_PORT:-11234}
+      - VISION_API_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
+      # Supervisor settings
+      - WORKSPACE_PATH=/workspace
+      - SUPERVISOR_WORKSPACES=/supervisor-workspaces
+      - TASK_STORAGE=/task
+      - SUPERVISOR_MAX_LOOPS=${SUPERVISOR_MAX_LOOPS:-20}
+      - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
+      # Supervisor's own Langfuse tracing (separate project)
+      - SUPERVISOR_TRACE_TO_LANGFUSE=${SUPERVISOR_TRACE_TO_LANGFUSE:-false}
+      - SUPERVISOR_LANGFUSE_PUBLIC_KEY=${SUPERVISOR_LANGFUSE_PUBLIC_KEY:-}
+      - SUPERVISOR_LANGFUSE_SECRET_KEY=${SUPERVISOR_LANGFUSE_SECRET_KEY:-}
+      - SUPERVISOR_LANGFUSE_PROJECT=${SUPERVISOR_LANGFUSE_PROJECT:-claude-supervisor}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
+      - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
+      # Agent's Langfuse credentials (for supervisor to review agent traces)
+      - AGENT_LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - AGENT_LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - AGENT_LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
+
+    # Volume mounts
+    volumes:
+      # Agent workspace (read-only for evaluation)
+      - ${WORKSPACE_PATH:-./workspaces/default}:/workspace:ro
+      # Supervisor's own workspaces (for turn isolation)
+      - ${SUPERVISOR_WORKSPACES:-./workspaces/supervisor}:/supervisor-workspaces
+      # Immutable task storage (read-only - neither agent nor supervisor can modify)
+      - ${TASK_STORAGE:-./workspaces/default-task}:/task:ro
+
+    # Network for communication with agent
+    networks:
+      - agentnet
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    # Resource limits (supervisor runs Claude CLI)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+networks:
+  agentnet:
+    driver: bridge

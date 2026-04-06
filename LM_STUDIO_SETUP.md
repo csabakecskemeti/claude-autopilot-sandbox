@@ -1,14 +1,11 @@
-# Setting Up Claude Code with a Local LLM and Local Web Search
+# Setting Up Claude Code with a Local LLM
 
 ## Overview
-This guide shows how to run **Claude Code** (the CLI) with:
-1. A large language model served locally by **LM Studio Server**
-2. A self-hosted **Whoogle** web search service running in Docker
-3. A custom **Claude Code skill** that integrates local web search
+This guide shows how to run **Claude Code** (the CLI) with a large language model served locally by **LM Studio Server**.
 
 This setup gives you a fully self-contained AI development environment without relying on external APIs.
 
-**Note**: This guide applies to any hardware capable of running LM Studio—a gaming PC with a decent GPU, a workstation, or a server. You can adapt the instructions to your own setup and choose a model size that fits your hardware.
+**Note**: This guide applies to any hardware capable of running LM Studio—a gaming PC with a decent GPU, a workstation, or a server.
 
 ---
 
@@ -18,15 +15,11 @@ This setup gives you a fully self-contained AI development environment without r
 |------|-------------|
 | **GPU-capable machine** | Any machine with a CUDA-compatible GPU (e.g., RTX 3090, RTX 4090, A100, etc.) |
 | **CUDA / cuDNN** | Properly configured for your GPU |
-| **Network access** | Claude Code must be able to reach the LM Studio server and Whoogle instance |
+| **Network access** | Claude Code must be able to reach the LM Studio server |
 | **Disk space** | Varies by model—large models (70B+) can occupy 40-80 GB |
-| **Docker** | For hosting Whoogle (can run on any machine with Docker installed) |
+| **Docker** | For running the Claude Autopilot Sandbox |
 
 ---
-
-# Part 1: Local LLM with LM Studio
-
-This setup follows the official LM Studio blog post: <https://lmstudio.ai/blog/claudecode>
 
 ## 1. Install LM Studio Server
 
@@ -58,31 +51,9 @@ The server exposes an OpenAI-compatible `/v1/messages` endpoint.
 
 ---
 
-## 3. Set Environment Variables for Claude Code
+## 3. Choose and Load a Model
 
-Claude Code reads `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` to connect to a custom backend.
-
-**If LM Studio runs on the same machine as Claude Code:**
-
-```bash
-export ANTHROPIC_BASE_URL="http://localhost:11234"
-export ANTHROPIC_AUTH_TOKEN=lmstudio
-```
-
-**If LM Studio runs on a remote machine** (e.g., at `<lm-studio-host-ip>`):
-
-```bash
-export ANTHROPIC_BASE_URL="http://<lm-studio-host-ip>:11234"
-export ANTHROPIC_AUTH_TOKEN=lmstudio
-```
-
-You can add these lines to `~/.bashrc` or your shell profile for persistence.
-
----
-
-## 4. Choose and Load a Model in LM Studio
-
-**Important**: The LM Studio blog mentions that the server auto-loads models, but in practice you may need to **manually load the model with a large context size**. Claude Code requires substantial context.
+**Important**: You need to **manually load the model with a large context size**. Claude Code requires substantial context.
 
 List available models:
 
@@ -108,99 +79,54 @@ lms load nvidia/nvidia-nemotron-3-super-49b-v1 --gpu max -c 131072 -y
 
 This step is critical—without explicitly loading the model with sufficient context, Claude Code may fail or produce truncated responses.
 
-**Loading with parallel request support**:
-
-For higher throughput (e.g., multiple concurrent Claude Code sessions), use the `--parallel` flag:
+**Loading with parallel request support** (for multiple concurrent sessions):
 
 ```bash
 lms load nvidia/nvidia-nemotron-3-super-49b-v1 --gpu max -c 131072 -y --parallel 5
 ```
 
-- `--parallel 5` — allows up to 5 concurrent requests
-
-Increase `--parallel` based on your GPU memory. Monitor utilization with `watch nvidia-smi`.
-
 ---
 
-## 5. Run Claude Code Against the LM Studio Backend
+## 4. Configure the Sandbox
 
-With the environment variables set, invoke Claude Code:
+Edit your `.env` file:
 
-```bash
-claude --model nvidia/nvidia-nemotron-3-super-49b-v1
+```env
+LLM_HOST=<your-lm-studio-ip>    # e.g., 192.168.1.100
+LLM_PORT=11234
+LLM_AUTH_TOKEN=lmstudio
+LLM_MODEL=nvidia/nvidia-nemotron-3-super-49b-v1
 ```
 
-Claude Code will send requests to your configured `ANTHROPIC_BASE_URL` and use the loaded model.
-
 ---
 
-## 6. Using Extended Context
-
-Because we started LM Studio with `-c 131072`, the model can consider up to **128k tokens** of prior conversation or code. For smaller models or limited GPU memory, reduce the `-c` value accordingly.
-
----
-
-# Part 2: Local Web Search with Whoogle
-
-Since a local LLM does not have access to Anthropic's built-in web search, we deploy a self-hosted Whoogle instance and create a Claude Code skill to use it.
-
-## 7. Deploy Whoogle with Docker
-
-You can run Whoogle on any machine with Docker installed—your local machine, a NAS, a home server, or a cloud VM.
+## 5. Build and Run
 
 ```bash
-docker run -d \
-    --name whoogle \
-    -p 5000:5000 \
-    -e WHOOGLE_RESULTS_PER_PAGE=10 \
-    benbusby/whoogle-search
+./build.sh
+./run.sh myproject "Build a todo app"
 ```
 
-**Port binding explained**:
-- `-p 5000:5000` maps **host port 5000** to **container port 5000** (Whoogle's internal port)
-- You can change the host port to any available port
+---
 
-The service exposes `GET /search?q=<query>&format=json`.
+## 6. Vision Model Setup (Optional)
 
-**Verify it works**:
+For UI verification and image analysis, load a vision-capable model:
 
 ```bash
-# If running locally
-curl "http://localhost:5000/search?q=Claude+Code&format=json"
-
-# If running on another machine
-curl "http://<whoogle-host-ip>:5000/search?q=Claude+Code&format=json"
+# In LM Studio, also load a vision model
+lms load qwen/qwen3-vl-4b --gpu max -y
 ```
 
-You should receive a JSON payload with search results.
+Configure in `.env`:
+
+```env
+VISION_MODEL=qwen/qwen3-vl-4b
+```
 
 ---
 
-# Part 3: Using with Claude Autopilot Sandbox
-
-If you're using the **claude-autopilot-sandbox** Docker setup, the web search skill is already included.
-
-1. Configure your `.env` file:
-   ```env
-   LLM_HOST=<your-lm-studio-ip>
-   LLM_PORT=11234
-   LLM_MODEL=nvidia/nvidia-nemotron-3-super-49b-v1
-   WHOOGLE_URL=http://<your-whoogle-ip>:5000
-   ```
-
-2. Build and run:
-   ```bash
-   docker compose build
-   ./run.sh myproject
-   ```
-
-3. Use `/websearch` inside Claude to search the web.
-
----
-
-# Maintenance & Troubleshooting
-
-## LM Studio Issues
+## Troubleshooting
 
 | Issue | Suggested Fix |
 |-------|---------------|
@@ -210,27 +136,15 @@ If you're using the **claude-autopilot-sandbox** Docker setup, the web search sk
 | **Slow responses** | Increase `--parallel` for higher throughput, but monitor GPU utilization. |
 | **Truncated or failing responses** | Manually load the model with larger context (e.g., `-c 131072`). |
 
-## Whoogle Issues
-
-| Issue | Suggested Fix |
-|-------|---------------|
-| **Search returns empty** | Check that Whoogle container is running: `docker ps`. Restart if needed. |
-| **Network timeout** | Ensure the machine running Claude Code can reach Whoogle. Check firewall rules. |
-| **Rate limiting** | Whoogle may get rate-limited by Google. Wait and retry, or configure proxies. |
-| **Container not starting** | Check if port is already in use: `lsof -i :5000`. Use a different port if needed. |
-
 ---
 
-# Summary
+## Summary
 
-1. **Install LM Studio** on your GPU machine (`curl … | bash`)
+1. **Install LM Studio** on your GPU machine
 2. **Start the server**: `lms server start --port 11234 --bind 0.0.0.0`
-3. **Set environment variables**: `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN=lmstudio`
-4. **Manually load a model** with large context (e.g., `lms load <model> --gpu max -c 131072 -y`)
-5. **Deploy Whoogle** with Docker on any machine
-6. **Run Claude Code** or use **claude-autopilot-sandbox** for autonomous operation
-
-You now have a self-contained AI development environment: **Claude Code** for prompting, **LM Studio Server** delivering a local LLM, and a local **Whoogle-based web search**—all running on your own infrastructure.
+3. **Manually load a model** with large context: `lms load <model> --gpu max -c 131072 -y`
+4. **Configure `.env`** with LLM_HOST, LLM_PORT, LLM_MODEL
+5. **Build and run** the sandbox: `./build.sh && ./run.sh myproject`
 
 ---
 
@@ -238,5 +152,4 @@ You now have a self-contained AI development environment: **Claude Code** for pr
 
 - [LM Studio + Claude Code Blog Post](https://lmstudio.ai/blog/claudecode)
 - [LM Studio Download](https://lmstudio.ai/download)
-- [Whoogle Search on Docker Hub](https://hub.docker.com/r/benbusby/whoogle-search)
 - [Claude Code Documentation](https://docs.anthropic.com/claude-code)

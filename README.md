@@ -1,13 +1,11 @@
 # Claude Autopilot Sandbox
 
-**Version 1.0.0** | [Changelog](CHANGELOG.md)
-
 Run Claude Code CLI autonomously in a Docker sandbox with your own local LLM. 100% local execution with full tool access for long-running, unattended task completion.
 
 ## Features
 
 - **100% Local** - Uses your own LLM (LM Studio, Ollama, vLLM, etc.)
-- **Autonomous Operation** - Self-sustaining supervisor loop keeps Claude working
+- **Autonomous Operation** - External supervisor agent validates task completion
 - **Vision Capabilities** - Screenshot and analyze UIs, verify web apps visually
 - **Full Sandbox** - Claude has unrestricted access inside the container
 - **Isolated Workspaces** - Run multiple projects simultaneously
@@ -21,37 +19,142 @@ cd claude-autopilot-sandbox
 cp .env.example .env
 # Edit .env with your LLM settings
 
-# 2. Build and run
-docker compose build
-./run.sh
+# 2. Build containers
+./build.sh
 
-# 3. Give Claude a task and let it work
+# 3. Run with a task
+./run.sh myproject "Build a todo app with React"
 ```
 
 ## Architecture
 
 ```
-+---------------------------------------------------------------+
-|                     Docker Container                           |
-|  +-----------------------------------------------------------+ |
-|  |                    Claude Code CLI                         | |
-|  |  (Native installation via claude.ai/install.sh)           | |
-|  +-----------------------------------------------------------+ |
-|                            |                                   |
-|  +-------------+  +-------------+  +-------------------------+ |
-|  |   Skills    |  |  Subagents  |  |       Workspace         | |
-|  | /vision     |  | debugger    |  | ~/workspace/            | |
-|  | /supervisor |  | web-search  |  | (mounted volume)        | |
-|  | /websearch  |  | code-review |  |                         | |
-|  +-------------+  +-------------+  +-------------------------+ |
-+---------------------------------------------------------------+
-                            |
-                   HTTP (OpenAI-compatible API)
-                            |
-+---------------------------------------------------------------+
-|              Your LLM Backend (LM Studio, Ollama, etc.)       |
-+---------------------------------------------------------------+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  HOST (run.sh controls everything)                                          │
+│                                                                             │
+│  ./workspaces/myproject/            → Agent's workspace                     │
+│  ./workspaces/myproject-supervisor/ → Supervisor's workspaces (per turn)    │
+│  ./workspaces/myproject-task/       → IMMUTABLE task storage                │
+└─────────────────────────────────────────────────────────────────────────────┘
+              │                         │                    │
+              │ (rw)                    │ (rw)               │ (ro to both)
+              ▼                         ▼                    ▼
+┌──────────────────────────────┐    ┌──────────────────────────────┐
+│  Agent Container             │    │  Supervisor Container        │
+│                              │    │                              │
+│  /home/claude/workspace (rw) │    │  /supervisor-workspaces (rw) │
+│  /task (READ-ONLY)           │    │  /workspace (READ-ONLY)      │
+│                              │    │  /task (READ-ONLY)           │
+│  - Claude Code CLI           │───►│                              │
+│  - Full tool access          │    │  - Claude Code CLI           │
+│  - Skills, hooks             │    │  - Flask API (:8080)         │
+│  - Autonomous mode           │    │  - Evaluates task completion │
+│                              │◄───│  - Returns feedback          │
+│  Stop hook calls supervisor  │    │  - Same capabilities         │
+└──────────────────────────────┘    └──────────────────────────────┘
+              │                                      │
+              └──────────────┬───────────────────────┘
+                             │
+                    HTTP (OpenAI-compatible API)
+                             │
+              ┌──────────────────────────────┐
+              │  Your LLM Backend            │
+              │  (LM Studio, Ollama, etc.)   │
+              └──────────────────────────────┘
 ```
+
+**Key Security Properties:**
+- Agent cannot modify supervisor's code or workspace
+- Supervisor cannot modify agent's code (read-only access)
+- Neither can modify the original task (immutable, Docker-enforced)
+- Only the supervisor decides when the task is "complete"
+
+**Both containers share the same base image (`claude-sandbox`)** with:
+- Ubuntu 24.04, Python 3, Node.js
+- Playwright + Chromium for browser automation
+- Vision model access for screenshot analysis
+- Full Claude Code CLI capabilities
+
+## Building
+
+```bash
+# Build all containers (recommended)
+./build.sh
+
+# Build with no cache (full rebuild)
+./build.sh --no-cache
+
+# Build specific targets
+./build.sh base        # Just the base image
+./build.sh agent       # Base + agent
+./build.sh supervisor  # Base + supervisor
+```
+
+The build script automatically builds in the correct order:
+1. `claude-sandbox:latest` (shared base image)
+2. Agent container
+3. Supervisor container
+
+## Running
+
+```bash
+# Basic usage - interactive mode
+./run.sh myproject
+
+# With initial task (autonomous mode)
+./run.sh myproject "Build a Flask API with user authentication"
+
+# Default workspace
+./run.sh
+```
+
+Each run creates:
+- `./workspaces/<name>/` - Agent's workspace (your code)
+- `./workspaces/<name>-supervisor/` - Supervisor's evaluation workspaces
+
+### Important: Switching Workspaces
+
+The supervisor container mounts the workspace read-only. **When switching to a different workspace, you must restart the supervisor** to mount the new workspace path.
+
+```bash
+# CORRECT: Stop everything, then start new workspace
+docker compose down
+./run.sh newproject "Build something new"
+
+# WRONG: Don't try to reuse running supervisor with different workspace
+# The supervisor would still be looking at the old workspace!
+```
+
+**Why?** The supervisor's volume mounts are set at container start:
+```
+/workspace → ./workspaces/<name>/          (read-only)
+/supervisor-workspaces → ./workspaces/<name>-supervisor/
+```
+
+If you skip `docker compose down`, the supervisor stays mounted to the previous workspace and will evaluate the wrong code.
+
+### Resuming Work on Same Workspace
+
+If you're continuing work on the **same** workspace, you can keep the supervisor running:
+
+```bash
+# First session
+./run.sh myproject "Start building feature X"
+# ... agent works, you exit with Ctrl+C ...
+
+# Continue same workspace - supervisor already has correct mount
+./run.sh myproject "Continue with feature X"
+```
+
+### Quick Reference
+
+| Scenario | Command |
+|----------|---------|
+| New workspace | `docker compose down && ./run.sh newname "task"` |
+| Same workspace (continue) | `./run.sh samename "continue task"` |
+| Same workspace (fresh start) | `./run.sh samename "new task"` |
+| Check running containers | `docker compose ps` |
+| View supervisor logs | `docker logs claude-supervisor` |
 
 ## Configuration
 
@@ -60,77 +163,92 @@ docker compose build
 Copy `.env.example` to `.env` and configure:
 
 ```env
-# LLM Backend
-LLM_HOST=192.168.7.103
+# LLM Backend (required)
+LLM_HOST=192.168.1.100          # IP of machine running LM Studio
 LLM_PORT=11234
 LLM_AUTH_TOKEN=lmstudio
 LLM_MODEL=your-model-name
 
-# Vision Model (optional)
+# Vision Model (optional - for screenshot analysis)
 VISION_MODEL=qwen/qwen3-vl-4b
-
-# Web Search (Playwright MCP - no external service needed)
-# The container includes @playwright/mcp for browser-based web search
-
-# Langfuse Tracing (optional - for agent evaluation)
-TRACE_TO_LANGFUSE=true
-LANGFUSE_PUBLIC_KEY=pk-lf-xxx
-LANGFUSE_SECRET_KEY=sk-lf-xxx
-LANGFUSE_HOST=http://host.docker.internal:3000
-LANGFUSE_PROJECT=claude-autopilot-sandbox
 
 # Resource Limits
 MEMORY_LIMIT=16G
 MEMORY_RESERVATION=2G
 
-# Workspace
-WORKSPACE_NAME=default
+# Workspace base (use internal drive on macOS to avoid exFAT issues)
+# WORKSPACE_BASE=/Users/yourusername/claude-workspaces
 ```
 
-### LLM Backend Setup
+### Supervisor Configuration
 
-See [LM_STUDIO_SETUP.md](LM_STUDIO_SETUP.md) for detailed instructions on setting up LM Studio with large context models.
+```env
+# Supervisor evaluation limits
+SUPERVISOR_MAX_LOOPS=20         # Max evaluation rounds before forcing stop
+SUPERVISOR_TIMEOUT=3600         # Timeout per evaluation (seconds) - 1 hour for complex tasks
 
-**LM Studio (quick start):**
-```bash
-# Install LM Studio
-curl -fsSL https://lmstudio.ai/install.sh | bash
-
-# Start server
-lms server start -p 11234 --bind 0.0.0.0
-
-# Load model with large context
-lms load <model-name> --gpu max -c 131072 -y
+# Supervisor's own Langfuse tracing (optional)
+SUPERVISOR_TRACE_TO_LANGFUSE=false
+SUPERVISOR_LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+SUPERVISOR_LANGFUSE_SECRET_KEY=sk-lf-xxx
+SUPERVISOR_LANGFUSE_PROJECT=claude-supervisor
 ```
 
-**Ollama:**
-```bash
-ollama serve
-ollama pull llama3.3:70b
-# Set LLM_PORT=11434 in .env
+### Langfuse Tracing (Optional)
+
+Track agent sessions in Langfuse:
+
+```env
+TRACE_TO_LANGFUSE=true
+LANGFUSE_PUBLIC_KEY=pk-lf-xxx
+LANGFUSE_SECRET_KEY=sk-lf-xxx
+LANGFUSE_HOST=http://host.docker.internal:3000
+LANGFUSE_PROJECT=claude-code
 ```
 
-## Usage
+## How the Supervisor Works
 
-### Running Claude
+The supervisor is an **external Claude Code agent** that evaluates whether the main agent has completed its task:
 
-```bash
-# Default workspace
-./run.sh
-
-# Named workspace (isolated)
-./run.sh my-project
-./run.sh client-work
-
-# Direct docker-compose (with port access)
-WORKSPACE_NAME=myproject docker compose run --rm --service-ports claude-local
+```
+Agent works on task
+        │
+        ▼
+Agent tries to stop
+        │
+        ▼
+Stop hook calls supervisor API
+        │
+        ▼
+┌───────────────────────────────────────┐
+│  Supervisor Agent                     │
+│                                       │
+│  1. Reads original task               │
+│  2. Explores agent's workspace        │
+│  3. Analyzes code, runs tests         │
+│  4. Determines: complete or not?      │
+│  5. Returns feedback                  │
+└───────────────────────────────────────┘
+        │
+        ▼
+   ┌────┴────┐
+   │         │
+complete  not_complete
+   │         │
+   ▼         ▼
+ STOP    Agent continues
+         with feedback
 ```
 
-Each workspace is isolated in `./workspaces/<name>/` and mapped to `/home/claude/workspace` in the container.
+**Key features:**
+- Same capabilities as agent (can read files, run tests, use browser)
+- READ-ONLY access to agent workspace (can't modify agent's code)
+- Isolated workspaces per evaluation turn
+- Max loop limit prevents infinite loops (default: 20)
 
-### Accessing Web Apps from Host
+## Accessing Web Apps
 
-When the agent runs a web server inside the container, you can access it from your browser. **Ports are mapped with a +20000 offset** to avoid conflicts:
+When the agent runs a web server, access it from your browser with **+20000 port offset**:
 
 | Agent says | Access from host |
 |------------|------------------|
@@ -139,340 +257,120 @@ When the agent runs a web server inside the container, you can access it from yo
 | `http://localhost:8000` | `http://localhost:28000` |
 | `http://localhost:8080` | `http://localhost:28080` |
 
-**Rule of thumb:** Add 20000 to any port the agent mentions.
-
-### Autonomous Operation
-
-Claude operates in a self-sustaining loop:
-
-1. **You give a task** - Type your request
-2. **Claude breaks it down** - Creates todos to track progress
-3. **Claude works** - Implements each todo, runs tests
-4. **Claude verifies** - Uses vision to verify UI if applicable
-5. **Supervisor evaluates** - Claude calls `/supervisor` to check progress
-6. **Loop continues** - Until all todos complete and tests pass
-
-**You don't need to keep prompting** - Claude will keep working autonomously.
-
-### Vision Capabilities
-
-Claude can see and analyze images. Essential for UI testing.
-
-```bash
-# Analyze any image
-/vision analyze ./screenshot.png "What do you see?"
-
-# Screenshot and analyze a web page
-/vision analyze http://localhost:5000 "Describe this UI"
-
-# Verify UI matches expectations
-/vision verify http://localhost:5000 "Should show: login form with email and password fields"
-
-# Extract text from image (OCR)
-/vision ocr ./document.png
-
-# View recent vision logs
-/vision logs
-```
-
-**UI Testing Workflow:**
-```bash
-# Start app
-python app.py &
-sleep 2
-
-# Verify UI
-~/.claude/skills/vision/vision.sh verify http://localhost:5000 \
-    "Should show: a title, input form, and todo list"
-```
-
-All vision requests are logged to `~/workspace/.vision_logs/` with screenshots.
-
 ## Skills
 
 Skills are invoked with `/skillname` syntax:
 
-| Skill | Usage | Description |
-|-------|-------|-------------|
-| `/plan` | `/plan` | Create implementation plan (no approval needed) |
-| `/tasks` | `/tasks add/list/done` | Track task progress |
-| `/vision` | `/vision analyze/verify/ocr <image_or_url>` | Image analysis, UI verification, OCR |
-| `/webfetch` | `/webfetch <url> "<prompt>"` | Fetch URL and analyze with local LLM |
-| `/supervisor` | `/supervisor` | Check progress and decide next action |
-| `/websearch` | Use Playwright MCP tools | Web search via browser automation |
-| `/memory` | `/memory store/recall <text>` | Persistent memory across sessions |
-| `/notes` | `/notes add/read <name>` | Note-taking system |
-| `/pkg-install` | `/pkg-install apt/pip <pkg>` | Install packages at runtime |
-| `/code-runner` | `/code-runner python '<code>'` | Execute code snippets |
-| `/file-convert` | `/file-convert pdf2txt <in> <out>` | Convert between formats |
-| `/api-tester` | `/api-tester GET <url>` | Test REST APIs |
-| `/sql-query` | `/sql-query sqlite <db> <query>` | Execute SQL queries |
-
-## Subagents
-
-Claude can delegate to specialized subagents:
-
-| Agent | Purpose |
-|-------|---------|
-| `debugger` | Bug investigation and error fixing |
-| `web-search-subagent` | Research tasks using web search |
-| `code-reviewer` | Code quality and security review |
-
-## Tracing with Langfuse
-
-Track and evaluate agent sessions using Langfuse (self-hosted).
-
-### Quick Setup
-
-1. Add to `.env`:
-   ```env
-   TRACE_TO_LANGFUSE=true
-   LANGFUSE_PUBLIC_KEY=pk-lf-xxx
-   LANGFUSE_SECRET_KEY=sk-lf-xxx
-   LANGFUSE_HOST=http://host.docker.internal:3000
-   ```
-
-2. Rebuild: `docker compose build --no-cache`
-
-3. Run a session - traces appear in Langfuse UI
-
-### What Gets Traced
-
-- Every turn (user message → assistant response)
-- LLM calls with token usage
-- Tool calls (Read, Write, Bash, etc.)
-- Grouped by session for conversation view
-
-See [docs/TRACING.md](docs/TRACING.md) for detailed setup and debugging.
-
-## The Supervisor System
-
-The supervisor keeps Claude working autonomously by checking progress at the end of each turn.
-
-### How It Works
-
-```
-Agent works -> calls /supervisor -> Supervisor checks todos & tests -> Outputs instructions -> Agent continues
-```
-
-**Supervisor decisions:**
-- **ERRORS FOUND** - Tests fail or errors exist - continue fixing
-- **PROGRESS OK** - Tests pass, todos remain - continue with next todo
-- **ALL COMPLETE** - All done, tests pass - wait for user
-
-### Example Session
-
-```
-$ ./run.sh flask-app
-
-You: Build a Flask todo app with add, complete, and delete functionality
-
-[Claude creates todos]
-[Claude implements app.py, templates, tests]
-[Claude runs tests - they pass]
-[Claude calls /supervisor]
-
-Supervisor: PROGRESS OK - Continue with next todo
-[Claude continues...]
-
-[Eventually all todos complete]
-
-Supervisor: ALL COMPLETE - Waiting for user
-```
-
-## Workspace Management
-
-### Structure
-
-Each workspace contains:
-```
-./workspaces/myproject/
-├── app.py                # Your project files
-├── tests/
-├── .memory/              # Persistent memory
-├── .notes/               # Notes
-├── .vision_logs/         # Vision request logs
-└── CLAUDE.md             # Workspace instructions
-```
-
-### Customizing CLAUDE.md
-
-Edit the workspace's `CLAUDE.md` to add project-specific instructions:
-
-```markdown
-# Project Instructions
-
-## Project-Specific Rules
-- This is a Python 3.11 project
-- Use pytest for testing
-- Follow PEP 8
-
-## Autonomous Operation
-... (keep the supervisor instructions)
-```
-
-## Installed Tools
-
-The container includes:
-
-| Category | Tools |
-|----------|-------|
-| **Languages** | Python 3, Node.js |
-| **PDF** | poppler-utils (pdftotext, pdftoppm) |
-| **Databases** | sqlite3, postgresql-client |
-| **Browser** | Playwright with Chromium |
-| **Display** | Xvfb, ImageMagick (for GUI apps) |
-| **Python** | pandas, requests, beautifulsoup4, playwright |
-| **Utilities** | git, curl, jq, htop, vim |
-
-### Installing Additional Packages
-
-```bash
-# Use the skill
-/pkg-install pip numpy matplotlib
-/pkg-install apt ffmpeg
-
-# Or use sudo directly
-sudo apt-get install -y package-name
-```
-
-Note: Packages installed at runtime don't persist after container exit.
-
-## Building
-
-```bash
-# Standard build
-docker compose build
-
-# Full rebuild (no cache)
-docker compose build --no-cache
-```
-
-## Troubleshooting
-
-### Cannot connect to LLM
-
-1. Verify LLM is running: `curl http://<LLM_HOST>:<LLM_PORT>/v1/models`
-2. Check `.env` settings
-3. Container uses host network - ensure LLM is accessible from host
-
-### Model not found
-
-- Verify `LLM_MODEL` matches exactly what your backend expects
-- LM Studio: use model identifier shown in UI
-- Ollama: use `ollama list` to see names
-
-### Vision not working
-
-1. Check `VISION_MODEL` is set in `.env`
-2. Ensure vision model is loaded in your LLM backend
-3. Test: `curl -X POST http://<host>:<port>/v1/chat/completions -d '...'`
-
-### WebSearch not working
-
-- Native WebSearch only works with Anthropic's API
-- Use Playwright MCP tools for web search (browser automation)
-- The `/websearch` skill uses `@playwright/mcp` which is built into the container
-- See `docs/WEBSEARCH_MIGRATION.md` for details
-
-### Container exits immediately
-
-```bash
-# Debug with shell access
-docker compose run --rm --entrypoint /bin/bash claude-local
-
-# Check environment
-env | grep -E 'ANTHROPIC|LLM|VISION'
-```
-
-### Cannot access web app from browser
-
-If the agent starts a web server but you can't access it from your Mac:
-
-1. **Add 20000 to the port** - Agent says `localhost:5000`, use `localhost:25000`
-2. **Restart container** - Port mappings only apply on fresh start
-3. **Check server binding** - Server must bind to `0.0.0.0`, not `127.0.0.1`
-
-### Out of memory
-
-- Increase `MEMORY_LIMIT` in `.env`
-- Use a smaller model
-- Close other memory-intensive applications
-
-### Cannot create files in subdirectories (exFAT issue)
-
-If file creation works in workspace root but fails in subdirectories like `templates/`:
-
-```
-touch: cannot touch 'templates/test.txt': No such file or directory
-```
-
-This is caused by **exFAT filesystem** issues with Docker bind mounts. exFAT doesn't properly support Unix permissions, causing Docker's virtualization layer to fail.
-
-**Fix:** Store workspaces on an internal APFS/HFS+ drive:
-
-```env
-# In .env
-WORKSPACE_BASE=/Users/yourusername/claude-workspaces
-```
-
-Then run normally: `./run.sh myproject`
-
-## Security
-
-The container is a secure sandbox:
-
-- **Isolated** - Cannot access host filesystem (except workspace)
-- **Non-root** - Runs as unprivileged `claude` user
-- **Removed on exit** - `--rm` flag cleans up
-- **Memory limited** - Prevents runaway processes
-- **Full automation inside** - Claude has unrestricted access within the sandbox
-
-This is safe because all changes are isolated to the mounted workspace volume.
+| Skill | Description |
+|-------|-------------|
+| `/plan` | Create implementation plan |
+| `/tasks` | Track task progress |
+| `/vision` | Image analysis, UI verification, OCR |
+| `/webfetch` | Fetch and analyze URLs |
+| `/memory` | Persistent memory across sessions |
+| `/notes` | Note-taking system |
 
 ## File Structure
 
 ```
 claude-autopilot-sandbox/
-├── VERSION                # Current version (1.0.0)
-├── CHANGELOG.md           # Version history
 ├── .env.example           # Configuration template
 ├── .env                   # Your configuration (gitignored)
-├── .gitignore
-├── .dockerignore          # Docker build exclusions
-├── docker-compose.yml     # Service definition
-├── Dockerfile             # Container build
-├── run.sh                 # Workspace launcher
-├── watchdog.sh            # External nudge script (optional)
-├── INSTALL.md             # Detailed installation guide
-├── USER_MANUAL.md         # User documentation
-├── CLAUDE.md              # Dev instructions for outer Claude (gitignored)
-├── claude-backup/
-│   └── CLAUDE.md          # Instructions for inner Claude (copied to container)
-├── LM_STUDIO_SETUP.md     # Guide for setting up LM Studio
-├── docs/                  # Additional documentation
-│   └── TRACING.md         # Langfuse tracing setup guide
-├── assets/                # Screenshots and images
-│   └── example-todo-app/  # Example task screenshots
-├── scripts/               # Runtime scripts
-│   └── init-workspace.sh  # Workspace initialization (runs at startup)
-├── hooks-backup/          # Hooks (copied into image)
-│   └── langfuse_stop_hook.sh  # Langfuse tracing hook
-├── skills-backup/         # Skills (copied into image)
-│   ├── plan/              # Implementation planning
-│   ├── tasks/             # Task tracking
-│   ├── vision/            # Image/screenshot analysis
-│   ├── supervisor/        # Progress checking
-│   ├── websearch/         # Web search
-│   ├── memory/            # Persistent memory
+├── build.sh               # Build script (builds base → agent → supervisor)
+├── run.sh                 # Run script (creates workspaces, starts containers)
+├── docker-compose.yml     # Service definitions
+├── Dockerfile.base        # Shared base image (claude-sandbox)
+├── Dockerfile             # Agent container
+├── supervisor/
+│   ├── Dockerfile         # Supervisor container
+│   ├── app.py             # Flask API
+│   ├── SUPERVISOR_PROMPT.md # Evaluation prompt
 │   └── ...
-└── agents-backup/         # Subagents (copied into image)
-    ├── debugger.md
-    ├── web-search-subagent.md
-    └── code-reviewer.md
+├── scripts/
+│   └── init-workspace.sh  # Agent workspace initialization
+├── skills-backup/         # Skills (copied into agent image)
+├── hooks-backup/          # Hooks (copied into agent image)
+├── agents-backup/         # Subagents (copied into agent image)
+├── claude-backup/
+│   └── CLAUDE.md          # Instructions for agent
+├── workspaces/            # Created at runtime (gitignored)
+│   ├── myproject/         # Agent workspace
+│   └── myproject-supervisor/ # Supervisor workspaces
+└── docs/
+    ├── AGENT_SUPERVISOR_PLAN.md  # Supervisor architecture details
+    └── TRACING.md         # Langfuse setup guide
 ```
 
-**Note:** The `workspaces/` directory is created automatically when you first run `./run.sh`. It's gitignored since it contains user data.
+## Troubleshooting
+
+### Build fails
+
+```bash
+# Ensure base image is built first
+./build.sh base
+
+# Then build the rest
+./build.sh
+```
+
+### Cannot connect to LLM
+
+1. Verify LLM is running: `curl http://<LLM_HOST>:<LLM_PORT>/v1/models`
+2. Check `.env` settings
+3. Ensure LLM is accessible from Docker (use machine IP, not localhost)
+
+### Supervisor health check fails
+
+```bash
+# Check supervisor logs
+docker logs claude-supervisor
+
+# Test supervisor API manually
+curl http://localhost:8080/health  # Won't work - internal only
+docker exec claude-supervisor curl http://localhost:8080/health
+```
+
+### Agent stuck in loop
+
+The supervisor has a max loop limit (default 20). If reached, it forces completion with a warning. Adjust with:
+
+```env
+SUPERVISOR_MAX_LOOPS=30
+```
+
+### Supervisor evaluating wrong workspace
+
+If the supervisor approves incomplete work or reports wrong files, you probably switched workspaces without restarting:
+
+```bash
+# Fix: Always stop containers when switching workspaces
+docker compose down
+./run.sh newworkspace "task"
+```
+
+The supervisor mounts the workspace at startup. Switching workspaces requires a restart.
+
+### Cannot access web app from browser
+
+1. Add 20000 to the port
+2. Ensure server binds to `0.0.0.0`, not `127.0.0.1`
+3. Restart container if port mappings changed
+
+### exFAT filesystem issues
+
+Store workspaces on an internal APFS/HFS+ drive:
+
+```env
+WORKSPACE_BASE=/Users/yourusername/claude-workspaces
+```
+
+## Security
+
+Both containers are secure sandboxes:
+- **Isolated** - Cannot access host filesystem (except workspace)
+- **Non-root** - Run as unprivileged users
+- **Memory limited** - Prevents runaway processes
+- **Supervisor read-only** - Cannot modify agent's work
 
 ## License
 

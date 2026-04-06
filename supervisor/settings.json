@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": ["*"],
+    "deny": []
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/supervisor/.claude/hooks/supervisor_stop_hook.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

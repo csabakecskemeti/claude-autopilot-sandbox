@@ -28,6 +28,7 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
   "hooks": {
     "Stop": [
       {
+        "matcher": "",
         "hooks": [
           {
             "type": "command",

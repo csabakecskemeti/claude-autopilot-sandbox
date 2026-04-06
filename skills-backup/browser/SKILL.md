@@ -1,98 +1,154 @@
 ---
 name: browser
-description: Browser automation using Playwright CLI. Use for web scraping, screenshots, UI testing.
+description: "Browser automation with Python Playwright. Use for screenshots, web scraping, form filling, and visual verification of web apps."
 ---
 
-# Browser Automation with Playwright CLI
+# Browser Automation (Python Playwright)
 
-Use `playwright-cli` directly for browser automation. **No wrapper script needed.**
+Use Python Playwright for browser automation. Chromium is pre-installed.
 
-## Quick Start
+## Quick Examples
 
-```bash
-# 1. Open browser and navigate to URL
-playwright-cli open "https://example.com"
+### Take a Screenshot
 
-# 2. Get page content with element references
-playwright-cli browser_snapshot
-
-# 3. Interact with elements (use refs from snapshot like e21, e35)
-playwright-cli click e21
-playwright-cli type e35 "search text"
-
-# 4. Take screenshot (saves to file - safe for LLMs)
-playwright-cli screenshot --filename="$HOME/workspace/screenshot.png"
-
-# 5. Navigate to another page
-playwright-cli goto "https://another-url.com"
-
-# 6. Close browser when done
-playwright-cli close
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={'width': 1280, 'height': 720})
+    page.goto('https://example.com', wait_until='networkidle', timeout=30000)
+    page.screenshot(path='screenshot.png')
+    browser.close()
+    print('Screenshot saved to screenshot.png')
+"
 ```
 
-## When to Use This vs /websearch
+### Screenshot a Local App
 
-- **Need search results?** → Use `/websearch` (faster, no browser needed)
-- **Need to interact with a page?** → Use `/browser` (this skill)
-- **Need page content?** → Use `/fetch`
-
-## Common Workflow Example
-
-```bash
-# Screenshot a webpage
-playwright-cli open "https://example.com/dashboard"
-playwright-cli screenshot --filename="$HOME/workspace/dashboard.png"
-playwright-cli close
-
-# Fill a form
-playwright-cli open "https://example.com/login"
-playwright-cli browser_snapshot                    # Find form element refs
-playwright-cli type e12 "username"                 # Type in username field
-playwright-cli type e15 "password"                 # Type in password field
-playwright-cli click e21                           # Click submit button
-playwright-cli close
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={'width': 1280, 'height': 720})
+    page.goto('http://localhost:8000', wait_until='networkidle', timeout=30000)
+    page.screenshot(path='app_screenshot.png', full_page=True)
+    browser.close()
+    print('Screenshot saved to app_screenshot.png')
+"
 ```
 
-## Core Commands
+### Extract Text from Page
 
-| Command | Description |
-|---------|-------------|
-| `open [url]` | Start browser, optionally navigate to URL |
-| `goto <url>` | Navigate to URL (browser must be open) |
-| `browser_snapshot` | Get page content as YAML with element refs |
-| `click <ref>` | Click element by reference (e.g., e21) |
-| `type <ref> <text>` | Type text in element |
-| `screenshot --filename=<path>` | Save screenshot to file |
-| `close` | Close browser session |
-
-## Important Notes
-
-1. **Always `open` first** - Other commands need an open browser
-2. **Use `browser_snapshot`** to see element references (e21, e35, etc.)
-3. **Screenshots save to files** - Safe for LLMs, no binary in response
-4. **Remember to `close`** when done to free resources
-
-## Full Help
-
-Run `playwright-cli --help` for all available commands and options.
-
-## Element References
-
-The `browser_snapshot` command returns YAML with element references:
-
-```yaml
-- button "Search" [ref=e21]
-- textbox "Search" [ref=e35]
-- link "Images" [ref=e42]
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto('https://example.com', wait_until='networkidle')
+    text = page.inner_text('body')
+    print(text)
+    browser.close()
+"
 ```
 
-Use these refs with `click` and `type` commands.
+### Fill a Form
+
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto('https://example.com/login')
+    page.fill('input[name=\"username\"]', 'myuser')
+    page.fill('input[name=\"password\"]', 'mypass')
+    page.click('button[type=\"submit\"]')
+    page.wait_for_load_state('networkidle')
+    page.screenshot(path='after_login.png')
+    browser.close()
+"
+```
+
+### Click and Navigate
+
+```python
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto('https://example.com')
+    page.click('a:has-text(\"More information\")')
+    page.wait_for_load_state('networkidle')
+    print('Navigated to:', page.url)
+    page.screenshot(path='after_click.png')
+    browser.close()
+"
+```
+
+## When to Use This vs Other Skills
+
+| Need | Use |
+|------|-----|
+| Search the web | `/websearch` (faster, no browser) |
+| Download a URL | `/fetch` |
+| Interact with a page | `/browser` (this skill) |
+| Take screenshots | `/browser` (this skill) |
+| Analyze an image | `/vision` |
+
+## Common Selectors
+
+| Selector | Description |
+|----------|-------------|
+| `#id` | Element by ID |
+| `.class` | Element by class |
+| `button` | Element by tag |
+| `[name="field"]` | Element by attribute |
+| `a:has-text("Click")` | Link with text |
+| `input[type="submit"]` | Input by type |
+| `form >> input` | Nested element |
+
+## Tips
+
+- **Always use `headless=True`** - No physical display available
+- **Set viewport size** for consistent screenshots: `viewport={'width': 1280, 'height': 720}`
+- **Use `wait_until='networkidle'`** to wait for page to fully load
+- **Use `full_page=True`** in screenshot() for long pages
+- **Save screenshots to workspace** - They'll be accessible on the host
 
 ## Analyzing Screenshots
 
-After taking a screenshot, use the `/vision` skill to analyze it:
+After taking a screenshot, use `/vision` to analyze it:
 
 ```bash
-playwright-cli screenshot --filename="$HOME/workspace/page.png"
-~/.claude/skills/vision/vision.sh analyze "$HOME/workspace/page.png" "describe what you see"
+# Take screenshot
+python3 -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page(viewport={'width': 1280, 'height': 720})
+    page.goto('http://localhost:8000', wait_until='networkidle')
+    page.screenshot(path='page.png')
+    browser.close()
+"
+
+# Analyze with vision
+~/.claude/skills/vision/vision.sh analyze page.png "describe what you see"
+```
+
+## Debugging
+
+If browser fails to launch:
+```bash
+# Check Xvfb is running
+pgrep Xvfb
+
+# Check DISPLAY is set
+echo $DISPLAY  # Should be :99
+
+# Test Playwright
+python3 -c "from playwright.sync_api import sync_playwright; print('OK')"
 ```

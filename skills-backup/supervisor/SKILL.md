@@ -1,106 +1,130 @@
 ---
 name: supervisor
-description: MANDATORY final step. Validates all workflow requirements before allowing completion.
+description: MANDATORY final step. Validates task completion through testing and QA before allowing stop.
 allowed-tools: Bash, Read, Task
 ---
 
 # Supervisor - Completion Validator
 
-**You called /supervisor. Now I will check if you can stop.**
+**You called /supervisor. Now I will verify your work is complete.**
 
 ---
 
-## Checklist Verification
+## Step 1: Self-Assessment
 
-### 1. Task Status
-!`~/.claude/skills/tasks/tasks.sh list 2>&1`
+Answer these questions honestly:
 
-!`~/.claude/skills/tasks/tasks.sh status 2>&1`
-
-### 2. Workflow State
-!`~/.claude/skills/workflow/workflow.sh status 2>&1`
-
-### 3. Vision Verification (if UI project)
-!`ls -la ~/.vision_logs/*.md 2>/dev/null | tail -5 || echo "No vision logs found"`
-
-!`cat $(ls -t ~/workspace/.vision_logs/*_verify.md 2>/dev/null | head -1) 2>/dev/null || echo "No vision verify results"`
+1. **What was the original task?** (summarize in one sentence)
+2. **What did you build/fix?** (list main changes)
+3. **Did you test it?** (how did you verify it works?)
+4. **Are there any known issues?** (be honest)
 
 ---
 
-## Completion Requirements
+## Step 2: Run Verification
 
-**ALL of these must be true before you can stop:**
+### If this is a coding project, run tests:
 
-| # | Requirement | How to Check |
-|---|-------------|--------------|
-| 1 | All tasks marked `[x]` | No `[ ]` or `[>]` in task list |
-| 2 | Vision verify PASS | Latest .vision_logs/*_verify.md shows "PASS" (if UI project) |
-| 3 | No failing tests | Test output shows all passing |
-| 4 | Original request fulfilled | All requested features implemented |
-
----
-
-## Decision Logic
-
+```bash
+# Try common test commands (use whichever applies)
+npm test 2>&1 || python -m pytest 2>&1 || go test ./... 2>&1 || echo "No test runner found"
 ```
-IF any task is [ ] or [>]:
-    → CONTINUE: "Complete task N first"
 
-IF UI project AND (no vision log OR vision shows FAIL):
-    → CONTINUE: "Run /vision verify and fix until PASS"
+### If this is a web app, check it runs:
 
-IF tests were run AND any failed:
-    → CONTINUE: "Fix failing tests"
+```bash
+# Check if server is running on common ports
+curl -s http://localhost:3000 > /dev/null && echo "Server OK on 3000" || \
+curl -s http://localhost:8000 > /dev/null && echo "Server OK on 8000" || \
+curl -s http://localhost:5000 > /dev/null && echo "Server OK on 5000" || \
+echo "No server detected"
+```
 
-IF all checks pass:
-    → Call qa-agent to verify test coverage
-    → IF qa-agent returns GAPS: Add tasks and CONTINUE
-    → IF qa-agent returns VERIFIED: Proceed to completion
+### Check for obvious errors:
+
+```bash
+# Look for error patterns in recent output
+echo "=== Checking for errors ==="
 ```
 
 ---
 
-## Your Action Now
+## Step 3: QA Agent Review (Required)
 
-Based on the checklist above, determine:
+Call the qa-agent to review your work:
 
-### If NOT ready (any check fails):
+```
+Use Task tool with subagent_type "qa-agent" to verify:
+1. Does the implementation match the original request?
+2. Are there any obvious bugs or missing pieces?
+3. Is there adequate test coverage?
+```
 
-Output exactly:
+---
+
+## Step 4: Decision
+
+### If QA agent finds issues:
+
 ```
 CONTINUE
 
-Reason: [what failed]
-Action: [what to do next]
+Reason: [what QA found]
+Action: [fix the issues]
 ```
 
-Then continue working - do NOT stop.
+Then go fix the issues - do NOT stop.
 
-### If ALL checks pass:
+### If tests fail:
 
-1. First call qa-agent subagent to verify test coverage
-2. If qa-agent finds gaps, add tasks and continue
-3. Only if qa-agent says VERIFIED, then output:
+```
+CONTINUE
 
+Reason: Tests failing
+Action: Fix the failing tests
+```
+
+Then go fix them - do NOT stop.
+
+### If ALL verification passes:
+
+Output this:
 ```
 ALL COMPLETE
 
-Summary: [what was built]
-Tasks: [N] completed
-Vision: PASS
+Task: [what was requested]
+Built: [what you made]
+Tested: [how you verified]
 QA: VERIFIED
 ```
 
-And write the completion marker:
+Then write the completion marker:
 ```bash
 echo "COMPLETE $(date -u +%Y-%m-%dT%H:%M:%SZ)" > ~/workspace/.supervisor_complete
 ```
 
 ---
 
+## Supplementary Info (Optional)
+
+If task/workflow files exist, you can check them too:
+
+```bash
+# Task list (if exists)
+cat ~/workspace/.tasks 2>/dev/null || echo "No .tasks file"
+
+# Workflow state (if exists)
+cat ~/workspace/.workflow_state 2>/dev/null || echo "No .workflow_state file"
+```
+
+But these are NOT required for completion - tests and QA are what matter.
+
+---
+
 ## CRITICAL RULES
 
-- **NEVER output "ALL COMPLETE" if any task is incomplete**
-- **NEVER output "ALL COMPLETE" if vision shows FAIL**
-- **NEVER output "ALL COMPLETE" without calling qa-agent first**
-- **If in doubt, output CONTINUE and keep working**
+- **NEVER say "ALL COMPLETE" without running tests or QA**
+- **NEVER say "ALL COMPLETE" if tests are failing**
+- **NEVER say "ALL COMPLETE" if QA agent finds issues**
+- **If unsure, say CONTINUE and verify more**
+- **Always write `.supervisor_complete` marker when truly done**
