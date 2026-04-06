@@ -770,8 +770,13 @@ block_stop() {
     exit 0
 }
 
+# IMPORTANT:
+# Do NOT auto-allow when stop_hook_active=true.
+# We want repeated supervisor evaluations across continued turns:
+# not_complete -> block -> continue -> evaluate again.
+# Infinite-loop protection is handled by MAX_CONTINUE_CYCLES below.
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
-    allow_stop "stop_hook_active=true (preventing infinite loop)"
+    log "INFO" "stop_hook_active=true (continued turn) — still evaluating with supervisor"
 fi
 
 CURRENT_CYCLE=0
