@@ -1,8 +1,11 @@
 #!/bin/bash
 ###
-# Claude Code Stop Hook - Langfuse Tracing Integration
-# Sends Claude Code traces to Langfuse after each response.
-# Adapted from LangSmith hook for self-hosted Langfuse.
+# Claude Code Stop Hook — Langfuse tracing, then supervisor gate (single script).
+#
+# Why one file: Claude Code runs all matching Stop hooks in PARALLEL (see
+# https://code.claude.com/docs/en/hooks ). Two separate commands do not run in
+# array order; Langfuse and supervisor must be sequential: trace first, then
+# POST /evaluate, and only the supervisor step may print {decision,reason} to stdout.
 ###
 
 # CRITICAL: Disable bash history expansion to handle ! characters in JSON
@@ -53,42 +56,40 @@ log "INFO" "HOME=$HOME"
 STDIN_CONTENT=$(cat)
 log "INFO" "Received stdin (${#STDIN_CONTENT} bytes): $(echo "$STDIN_CONTENT" | head -c 500)"
 
-# Exit early if tracing disabled
-if [ "$(echo "$TRACE_TO_LANGFUSE" | tr '[:upper:]' '[:lower:]')" != "true" ]; then
-    debug "Tracing disabled, exiting early"
-    exit 0
-fi
-
-# Required commands
-for cmd in jq curl uuidgen; do
+# jq + curl required for supervisor path; uuidgen only for Langfuse
+for cmd in jq curl; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "Error: $cmd is required but not installed" >&2
         exit 0
     fi
 done
 
-# Config (continued)
+# Langfuse is optional — supervisor validation must always run after this script's Langfuse section
+RUN_LANGFUSE=0
 PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}"
 SECRET_KEY="${LANGFUSE_SECRET_KEY:-}"
 PROJECT="${LANGFUSE_PROJECT:-claude-code}"
 API_BASE="${LANGFUSE_HOST:-http://localhost:3000}"
 STATE_FILE="${STATE_FILE:-$HOME/.claude/state/langfuse_state.json}"
+CURRENT_TRACE_ID=""
 
-# Global variables
-CURRENT_TRACE_ID=""  # Track current trace for cleanup on exit
+if [ "$(echo "$TRACE_TO_LANGFUSE" | tr '[:upper:]' '[:lower:]')" = "true" ] && [ -n "$PUBLIC_KEY" ] && [ -n "$SECRET_KEY" ]; then
+    if command -v uuidgen &> /dev/null; then
+        RUN_LANGFUSE=1
+    else
+        log "WARN" "TRACE_TO_LANGFUSE=true but uuidgen not found; skipping Langfuse (supervisor still runs)"
+    fi
+elif [ "$(echo "$TRACE_TO_LANGFUSE" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+    log "WARN" "TRACE_TO_LANGFUSE=true but LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY empty; skipping Langfuse (supervisor still runs)"
+fi
 
-# Ensure state directory exists
 mkdir -p "$(dirname "$STATE_FILE")"
 mkdir -p "$(dirname "$LOG_FILE")"
 
-# Validate API keys
-if [ -z "$PUBLIC_KEY" ] || [ -z "$SECRET_KEY" ]; then
-    log "ERROR" "LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set"
-    exit 0
+AUTH_HEADER=""
+if [ "$RUN_LANGFUSE" = "1" ]; then
+    AUTH_HEADER=$(echo -n "$PUBLIC_KEY:$SECRET_KEY" | base64 | tr -d '\n')
 fi
-
-# Create Basic auth header
-AUTH_HEADER=$(echo -n "$PUBLIC_KEY:$SECRET_KEY" | base64 | tr -d '\n')
 
 # Langfuse API call helper - uses file-based approach to handle complex JSON
 langfuse_ingest_file() {
@@ -115,8 +116,8 @@ langfuse_ingest_file() {
         return 1
     fi
 
-    debug "Langfuse ingestion succeeded: $http_code"
-    echo "$response"
+    debug "Langfuse ingestion succeeded: $http_code (${#response} bytes; stdout not used — Stop hook must emit JSON-only when blocking)"
+    debug "Langfuse body (truncated): $(echo "$response" | head -c 400)"
 }
 
 # Load state
@@ -585,8 +586,8 @@ main() {
 
     # Check stop_hook_active flag
     if echo "$hook_input" | jq -e '.stop_hook_active == true' > /dev/null 2>&1; then
-        debug "stop_hook_active=true, skipping"
-        exit 0
+        debug "stop_hook_active=true, skipping Langfuse"
+        return 0
     fi
 
     # Extract session info
@@ -597,8 +598,8 @@ main() {
     transcript_path=$(echo "$hook_input" | jq -r '.transcript_path // ""' | sed "s|^~|$HOME|")
 
     if [ -z "$session_id" ] || [ ! -f "$transcript_path" ]; then
-        log "WARN" "Invalid input: session=$session_id, transcript=$transcript_path"
-        exit 0
+        log "WARN" "Invalid input: session=$session_id, transcript=$transcript_path (skipping Langfuse)"
+        return 0
     fi
 
     log "INFO" "Processing session $session_id"
@@ -618,8 +619,8 @@ main() {
     new_messages=$(awk -v start="$last_line" 'NR > start + 1 && NF' "$transcript_path")
 
     if [ -z "$new_messages" ]; then
-        debug "No new messages"
-        exit 0
+        debug "No new messages (skipping Langfuse)"
+        return 0
     fi
 
     local msg_count
@@ -734,51 +735,87 @@ main() {
     log "INFO" "Processed $turns turns in ${duration}s"
 }
 
-# Check if task is complete - uses marker file written by supervisor skill
-check_auto_continue() {
-    local transcript_path="$1"
-    local workspace_dir="$2"
-
-    # Check if supervisor wrote the completion marker file
-    # This is more reliable than grepping transcript (avoids matching code content)
-    local is_complete="false"
-    local marker_file="$workspace_dir/.supervisor_complete"
-
-    if [ -f "$marker_file" ]; then
-        is_complete="true"
-        log "INFO" "Found completion marker: $marker_file"
-        # Clean up the marker file after reading
-        rm -f "$marker_file" 2>/dev/null
-    fi
-
-    log "INFO" "Auto-continue check: is_complete=$is_complete (marker_file=$marker_file)"
-
-    local flag_file="$workspace_dir/.claude_continue_flag"
-
-    if [ "$is_complete" = "true" ]; then
-        log "INFO" "Task completed - no auto-continue needed"
-        rm -f "$flag_file" 2>/dev/null
-        return 0
-    else
-        log "INFO" "Task not complete - triggering auto-continue"
-
-        # Write flag for run.sh to detect (NO stdout - it interferes with Claude Code!)
-        echo "CONTINUE_NEEDED" > "$flag_file"
-        echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$flag_file"
-
-        return 1
-    fi
-}
-
-# Run main
-main
-
-# After tracing, check if auto-continue is needed
-WORKSPACE_DIR=$(echo "$STDIN_CONTENT" | jq -r '.cwd // ""')
-TRANSCRIPT=$(echo "$STDIN_CONTENT" | jq -r '.transcript_path // ""' | sed "s|^~|$HOME|")
-
-if [ -n "$WORKSPACE_DIR" ] && [ -n "$TRANSCRIPT" ]; then
-    check_auto_continue "$TRANSCRIPT" "$WORKSPACE_DIR"
+# --- 1) Langfuse (optional; never print non-JSON to stdout) ---
+if [ "$RUN_LANGFUSE" = "1" ]; then
+    main
+else
+    log "INFO" "Langfuse tracing skipped (disabled or not configured)"
 fi
 
-exit 0
+###############################################################################
+# 2) Supervisor gate (sequential after Langfuse — see file header)
+###############################################################################
+
+SUPERVISOR_URL="${SUPERVISOR_URL:-http://supervisor:8080}"
+MAX_CONTINUE_CYCLES="${MAX_CONTINUE_CYCLES:-100}"
+SUPERVISOR_TIMEOUT="${SUPERVISOR_TIMEOUT:-3600}"
+CYCLE_COUNTER_FILE="$HOME/.claude/state/continue_cycles"
+
+STOP_HOOK_ACTIVE=$(echo "$STDIN_CONTENT" | jq -r '.stop_hook_active // false')
+WORKSPACE_DIR=$(echo "$STDIN_CONTENT" | jq -r '.cwd // ""')
+
+log "INFO" "=== Supervisor validation === workspace=$WORKSPACE_DIR stop_hook_active=$STOP_HOOK_ACTIVE url=$SUPERVISOR_URL"
+
+allow_stop() {
+    local reason="$1"
+    log "INFO" "Allowing stop: $reason"
+    rm -f "$CYCLE_COUNTER_FILE" 2>/dev/null || true
+    exit 0
+}
+
+block_stop() {
+    local reason="$1"
+    log "INFO" "Blocking stop (reason length ${#reason})"
+    jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
+    exit 0
+}
+
+# IMPORTANT:
+# Do NOT auto-allow when stop_hook_active=true.
+# We want repeated supervisor evaluations across continued turns:
+# not_complete -> block -> continue -> evaluate again.
+# Infinite-loop protection is handled by MAX_CONTINUE_CYCLES below.
+if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
+    log "INFO" "stop_hook_active=true (continued turn) — still evaluating with supervisor"
+fi
+
+CURRENT_CYCLE=0
+if [ -f "$CYCLE_COUNTER_FILE" ]; then
+    CURRENT_CYCLE=$(cat "$CYCLE_COUNTER_FILE" 2>/dev/null || echo 0)
+fi
+CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
+echo "$CURRENT_CYCLE" > "$CYCLE_COUNTER_FILE"
+
+log "INFO" "Continue cycle: $CURRENT_CYCLE / $MAX_CONTINUE_CYCLES"
+
+if [ "$CURRENT_CYCLE" -ge "$MAX_CONTINUE_CYCLES" ]; then
+    allow_stop "Max continue cycles reached ($MAX_CONTINUE_CYCLES)"
+fi
+
+log "INFO" "Calling supervisor at $SUPERVISOR_URL/evaluate (timeout: ${SUPERVISOR_TIMEOUT}s)"
+
+RESPONSE=$(curl -s --max-time "$SUPERVISOR_TIMEOUT" -X POST "$SUPERVISOR_URL/evaluate" 2>&1)
+CURL_EXIT=$?
+
+if [ $CURL_EXIT -ne 0 ]; then
+    log "ERROR" "Supervisor curl failed: $CURL_EXIT response=$RESPONSE"
+    block_stop "ERROR: Cannot reach supervisor service at $SUPERVISOR_URL. Make sure the supervisor container is running."
+fi
+
+STATUS=$(echo "$RESPONSE" | jq -r '.status // "error"')
+MESSAGE=$(echo "$RESPONSE" | jq -r '.message // "No message from supervisor"')
+
+log "INFO" "Supervisor status=$STATUS message_preview=${MESSAGE:0:200}..."
+
+if [ "$STATUS" = "complete" ]; then
+    allow_stop "Supervisor verified completion"
+else
+    # Optional hardcoded nudge for headless / autonomous runs (supervisor text is often long).
+    # Disable: SUPERVISOR_AUTONOMY_APPEND=false
+    BLOCK_MSG="$MESSAGE"
+    if [ "${SUPERVISOR_AUTONOMY_APPEND:-true}" = "true" ] || [ "${SUPERVISOR_AUTONOMY_APPEND:-true}" = "1" ]; then
+        AUTONOMY_SUFFIX=$'\n\n---\n**Autonomous session:** The user is not available—do not ask them to confirm or choose. Keep working until the supervisor reports complete, unless you hit a true environment blocker. Prefer batching: address several supervisor next-steps in this turn (multiple files, tests, fixes) before stopping again.'
+        BLOCK_MSG="${MESSAGE}${AUTONOMY_SUFFIX}"
+    fi
+    block_stop "$BLOCK_MSG"
+fi

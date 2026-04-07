@@ -1,73 +1,9 @@
-# Dockerfile for Claude Code with Local LLM Support
-# Self-contained installation with full capabilities
+# Dockerfile - Claude Code Agent Container
+# Autonomous coding agent with full capabilities
+#
+# Requires: claude-sandbox:latest (build with: docker build -f Dockerfile.base -t claude-sandbox:latest .)
 
-FROM debian:bookworm-slim
-
-# Install system dependencies including tools for skills
-RUN apt-get update && apt-get install -y \
-    # Basic tools
-    git \
-    curl \
-    wget \
-    bash \
-    ca-certificates \
-    sudo \
-    jq \
-    # Python
-    python3 \
-    python3-pip \
-    python3-venv \
-    # Node.js (for Claude Code and JS execution)
-    nodejs \
-    npm \
-    # PDF tools (OCR handled by vision model)
-    poppler-utils \
-    # Virtual display for GUI apps (pygame, etc.)
-    xvfb \
-    x11-utils \
-    imagemagick \
-    # Database clients
-    sqlite3 \
-    postgresql-client \
-    # Playwright dependencies
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpango-1.0-0 \
-    libcairo2 \
-    # Additional utilities
-    htop \
-    vim \
-    less \
-    uuid-runtime \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python packages for skills
-RUN pip3 install --break-system-packages \
-    markdown \
-    pandas \
-    requests \
-    beautifulsoup4 \
-    playwright \
-    duckduckgo-search
-
-# Install Playwright browsers AND all system dependencies
-RUN playwright install chromium && playwright install-deps chromium
-
-# Install Playwright CLI for browser automation
-# CLI saves screenshots to files (not binary in response) - works better with LLMs
-# See: https://testcollab.com/blog/playwright-cli
-RUN npm install -g @playwright/cli
+FROM claude-sandbox:latest
 
 # Create non-root user with sudo access
 RUN useradd -m -s /bin/bash claude \
@@ -91,6 +27,7 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Add Claude to PATH
 ENV PATH="/home/claude/.local/bin:${PATH}"
+ENV HOME="/home/claude"
 
 # Copy skills, agents, hooks, and scripts into the image
 COPY --chown=claude:claude skills-backup/ /home/claude/.claude/skills/
@@ -98,11 +35,13 @@ COPY --chown=claude:claude agents-backup/ /home/claude/.claude/agents/
 COPY --chown=claude:claude hooks-backup/ /home/claude/.claude/hooks/
 COPY --chown=claude:claude scripts/ /home/claude/.claude/scripts/
 
-# Copy CLAUDE.md for autonomous operation instructions (from claude-backup/)
-COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/workspace/CLAUDE.md
+# Copy CLAUDE.md to .claude dir (will be copied to workspace by init-workspace.sh)
+# Can't copy directly to workspace because volume mount shadows it
+COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/.claude/CLAUDE.md
 
 # Make all skill, hook, and init scripts executable
 RUN find /home/claude/.claude/skills -name "*.sh" -exec chmod +x {} \; \
+    && find /home/claude/.claude/skills -name "*.py" -exec chmod +x {} \; \
     && find /home/claude/.claude/hooks -name "*.sh" -exec chmod +x {} \; \
     && find /home/claude/.claude/scripts -name "*.sh" -exec chmod +x {} \;
 
@@ -128,23 +67,19 @@ RUN echo '{\
 RUN echo '{\
   "permissions": {\
     "allow": ["*"],\
-    "deny": ["WebSearch", "WebFetch", "EnterPlanMode"]\
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]\
   },\
   "skipDangerousModePermissionPrompt": true\
 }' > /home/claude/.claude/settings.json
 
 WORKDIR /home/claude/workspace
 
-# Environment variables set via docker-compose.yml
-# ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN passed at runtime
-
 # Build arg for model, converted to ENV for runtime use
 ARG LLM_MODEL=nvidia.nvidia-nemotron-3-super-120b-a12b
 ENV LLM_MODEL=${LLM_MODEL}
 
-# Default shell
-SHELL ["/bin/bash", "-c"]
-
 # Entry point - initialize workspace then run Claude in fully automated mode
-ENTRYPOINT ["/bin/bash", "-c", "~/.claude/scripts/init-workspace.sh && exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions --allowedTools '*' \"$@\"", "--"]
+# If ORIGINAL_TASK is set, pass it as positional argument (interactive mode with initial prompt)
+# Without ORIGINAL_TASK, starts interactive mode with empty prompt
+ENTRYPOINT ["/bin/bash", "-c", "~/.claude/scripts/init-workspace.sh && if [ -n \"$ORIGINAL_TASK\" ]; then exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions --allowedTools '*' \"$ORIGINAL_TASK\"; else exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions --allowedTools '*'; fi"]
 CMD []
