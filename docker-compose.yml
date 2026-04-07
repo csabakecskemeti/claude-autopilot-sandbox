@@ -37,9 +37,13 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
-      # Supervisor URL and timeout (for stop hook)
+      # Supervisor URL and timeout (for stop hook curl + supervisor container)
       - SUPERVISOR_URL=http://supervisor:8080
       - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
+      # Extra seconds added for Langfuse work; Claude Stop hook timeout = SUPERVISOR_TIMEOUT + this
+      - STOP_HOOK_EXTRA_SEC=${STOP_HOOK_EXTRA_SEC:-1200}
+      # Append autonomous-work nudge to supervisor NOT_COMPLETE feedback (hook)
+      - SUPERVISOR_AUTONOMY_APPEND=${SUPERVISOR_AUTONOMY_APPEND:-true}
       # Initial task (passed from run.sh)
       - ORIGINAL_TASK=${ORIGINAL_TASK:-}
 

@@ -17,6 +17,12 @@ CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
 # Create .claude directory in workspace if it doesn't exist
 mkdir -p "$CLAUDE_DIR"
 
+# Stop hook runtime budget: Langfuse ingest can take a long time, then curl waits up to SUPERVISOR_TIMEOUT.
+# Claude Code kills the whole hook if JSON "timeout" is exceeded — must be > curl max-time + tracing work.
+SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
+STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
+STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
+
 # Generate PROJECT-LEVEL settings.json with hooks configuration
 # Project-level takes precedence over user-level, so hooks MUST be here
 # NOTE: One Stop hook only — langfuse_stop_hook.sh runs Langfuse then supervisor in order.
@@ -36,7 +42,7 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
           {
             "type": "command",
             "command": "${HOME}/.claude/hooks/langfuse_stop_hook.sh",
-            "timeout": 3600
+            "timeout": ${STOP_HOOK_CMD_TIMEOUT}
           }
         ]
       }
@@ -52,7 +58,9 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
     "LANGFUSE_DEBUG": "${LANGFUSE_DEBUG:-false}",
     "MAX_CONTINUE_CYCLES": "${MAX_CONTINUE_CYCLES:-100}",
     "SUPERVISOR_URL": "${SUPERVISOR_URL:-http://supervisor:8080}",
-    "SUPERVISOR_TIMEOUT": "${SUPERVISOR_TIMEOUT:-3600}"
+    "SUPERVISOR_TIMEOUT": "${SUPERVISOR_TIMEOUT:-3600}",
+    "STOP_HOOK_EXTRA_SEC": "${STOP_HOOK_EXTRA_SEC:-1200}",
+    "SUPERVISOR_AUTONOMY_APPEND": "${SUPERVISOR_AUTONOMY_APPEND:-true}"
   }
 }
 EOF

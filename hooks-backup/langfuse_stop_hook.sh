@@ -810,5 +810,12 @@ log "INFO" "Supervisor status=$STATUS message_preview=${MESSAGE:0:200}..."
 if [ "$STATUS" = "complete" ]; then
     allow_stop "Supervisor verified completion"
 else
-    block_stop "$MESSAGE"
+    # Optional hardcoded nudge for headless / autonomous runs (supervisor text is often long).
+    # Disable: SUPERVISOR_AUTONOMY_APPEND=false
+    BLOCK_MSG="$MESSAGE"
+    if [ "${SUPERVISOR_AUTONOMY_APPEND:-true}" = "true" ] || [ "${SUPERVISOR_AUTONOMY_APPEND:-true}" = "1" ]; then
+        AUTONOMY_SUFFIX=$'\n\n---\n**Autonomous session:** The user is not available—do not ask them to confirm or choose. Keep working until the supervisor reports complete, unless you hit a true environment blocker. Prefer batching: address several supervisor next-steps in this turn (multiple files, tests, fixes) before stopping again.'
+        BLOCK_MSG="${MESSAGE}${AUTONOMY_SUFFIX}"
+    fi
+    block_stop "$BLOCK_MSG"
 fi
