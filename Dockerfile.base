@@ -1,0 +1,69 @@
+# Dockerfile.base - Shared base image for Agent and Supervisor
+# Contains: Ubuntu 24.04, Claude CLI, Node.js, Python, Playwright
+#
+# Build: docker build -f Dockerfile.base -t claude-sandbox:latest .
+# Used by: Dockerfile (agent), supervisor/Dockerfile
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Basic tools
+    git \
+    curl \
+    wget \
+    bash \
+    ca-certificates \
+    sudo \
+    jq \
+    # Python
+    python3 \
+    python3-pip \
+    python3-venv \
+    # Node.js (for Claude Code and JS execution)
+    nodejs \
+    npm \
+    # PDF tools (OCR handled by vision model)
+    poppler-utils \
+    # Virtual display for headless browser
+    xvfb \
+    x11-utils \
+    imagemagick \
+    # Database clients
+    sqlite3 \
+    postgresql-client \
+    # Additional utilities
+    htop \
+    vim \
+    less \
+    uuid-runtime \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages (shared between agent and supervisor)
+RUN pip3 install --break-system-packages \
+    markdown \
+    pandas \
+    requests \
+    beautifulsoup4 \
+    playwright \
+    duckduckgo-search \
+    langfuse \
+    flask
+
+# Install Playwright browsers (Chromium only - Chrome doesn't support ARM64)
+# Install to shared location so users can access at runtime
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN playwright install chromium --with-deps \
+    && chmod -R 755 /opt/ms-playwright
+
+# Virtual display for Playwright
+ENV DISPLAY=:99
+
+# Default shell
+SHELL ["/bin/bash", "-c"]
+
+# Base image doesn't define user - each derived image creates its own
+# This allows agent (claude user) and supervisor (supervisor user) to have different configs

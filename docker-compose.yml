@@ -6,16 +6,18 @@ services:
       dockerfile: Dockerfile
       args:
         - LLM_MODEL=${LLM_MODEL:?Set LLM_MODEL in .env}
-    container_name: claude-agent
+    # Container name includes instance for uniqueness (optional override)
+    container_name: ${CONTAINER_PREFIX:-claude}-agent-${INSTANCE_NAME:-default}
 
-    # Port mappings - expose common development ports to host
-    # This allows accessing apps running in the container from your browser
-    # Uses 2xxxx range to avoid conflicts with other services
+    # Port mappings - configurable via PORT_PREFIX for multi-instance
+    # PORT_PREFIX is a single digit prepended to container port
+    # Default prefix is 2, so: 3000->23000, 5000->25000, 8000->28000, 8080->28080
+    # Set PORT_PREFIX=3 for second instance: 3000->33000, etc.
     ports:
-      - "23000:3000"   # Node.js/React
-      - "25000:5000"   # Flask
-      - "28000:8000"   # Django/FastAPI
-      - "28080:8080"   # General web
+      - "${PORT_PREFIX:-2}3000:3000"   # Node.js/React (default 23000)
+      - "${PORT_PREFIX:-2}5000:5000"   # Flask (default 25000)
+      - "${PORT_PREFIX:-2}8000:8000"   # Django/FastAPI (default 28000)
+      - "${PORT_PREFIX:-2}8080:8080"   # General web (default 28080)
 
     # Environment variables for local LLM
     environment:
@@ -24,9 +26,9 @@ services:
       # Disable extended thinking (local LLMs don't support it)
       - MAX_THINKING_TOKENS=0
       - WHOOGLE_URL=${WHOOGLE_URL:-}
-      # Vision model config (uses same backend as LLM)
-      - VISION_API_URL=http://${LLM_HOST}:${LLM_PORT:-11234}
-      - VISION_API_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      # Vision model config (defaults to same backend as LLM, can override)
+      - VISION_API_URL=http://${VISION_HOST:-${LLM_HOST}}:${VISION_PORT:-${LLM_PORT:-11234}}
+      - VISION_API_TOKEN=${VISION_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
       - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
       - HOME=/home/claude
       - TERM=xterm-256color
@@ -37,8 +39,8 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
-      # Supervisor URL and timeout (for stop hook curl + supervisor container)
-      - SUPERVISOR_URL=http://supervisor:8080
+      # Supervisor URL - can be local (http://supervisor:8080) or remote (http://dgx-spark:8080)
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://supervisor:8080}
       - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
       # Extra seconds added for Langfuse work; Claude Stop hook timeout = SUPERVISOR_TIMEOUT + this
       - STOP_HOOK_EXTRA_SEC=${STOP_HOOK_EXTRA_SEC:-1200}
@@ -46,6 +48,8 @@ services:
       - SUPERVISOR_AUTONOMY_APPEND=${SUPERVISOR_AUTONOMY_APPEND:-true}
       # Initial task (passed from run.sh)
       - ORIGINAL_TASK=${ORIGINAL_TASK:-}
+      # Instance identification (for logging/tracing)
+      - INSTANCE_NAME=${INSTANCE_NAME:-default}
 
     # Volume mounts - only workspace, no config mounts
     volumes:
@@ -59,7 +63,7 @@ services:
     stdin_open: true
     tty: true
 
-    # Network for communication with supervisor
+    # Network for communication with supervisor (if local)
     networks:
       - agentnet
 
@@ -71,7 +75,8 @@ services:
         reservations:
           memory: ${MEMORY_RESERVATION:-2G}
 
-    # Supervisor must be running for agent to work
+    # Supervisor dependency (only if using local supervisor)
+    # Set SKIP_LOCAL_SUPERVISOR=true to use remote supervisor
     depends_on:
       supervisor:
         condition: service_healthy
@@ -79,23 +84,30 @@ services:
   # External Supervisor container - Agent-based QA validator
   # Uses Claude Code CLI to evaluate agent's work
   # Has READ-ONLY access to agent workspace
+  #
+  # For remote supervisor: set SKIP_LOCAL_SUPERVISOR=true and SUPERVISOR_URL=http://remote:8080
   supervisor:
     build:
       context: ./supervisor
       dockerfile: Dockerfile
-    container_name: claude-supervisor
+    container_name: ${CONTAINER_PREFIX:-claude}-supervisor-${INSTANCE_NAME:-default}
+
+    # Expose supervisor port for remote access
+    # Default: 8080 (use SUPERVISOR_PORT_OFFSET for multiple supervisors)
+    ports:
+      - "${SUPERVISOR_EXTERNAL_PORT:-8080}:8080"
 
     # Environment variables
     environment:
-      # LLM configuration (same backend as agent)
-      - ANTHROPIC_BASE_URL=http://${LLM_HOST:?Set LLM_HOST in .env}:${LLM_PORT:-11234}
-      - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
-      - LLM_MODEL=${LLM_MODEL:-}
+      # LLM configuration - can be different from agent (e.g., different host)
+      - ANTHROPIC_BASE_URL=http://${SUPERVISOR_LLM_HOST:-${LLM_HOST}}:${SUPERVISOR_LLM_PORT:-${LLM_PORT:-11234}}
+      - ANTHROPIC_AUTH_TOKEN=${SUPERVISOR_LLM_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
+      - LLM_MODEL=${SUPERVISOR_LLM_MODEL:-${LLM_MODEL:-}}
       # Disable extended thinking (local LLMs don't support it)
       - MAX_THINKING_TOKENS=0
       # Vision model config (same as agent - for screenshot analysis)
-      - VISION_API_URL=http://${LLM_HOST}:${LLM_PORT:-11234}
-      - VISION_API_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
+      - VISION_API_URL=http://${SUPERVISOR_LLM_HOST:-${LLM_HOST}}:${SUPERVISOR_LLM_PORT:-${LLM_PORT:-11234}}
+      - VISION_API_TOKEN=${SUPERVISOR_LLM_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
       - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
       # Supervisor settings
       - WORKSPACE_PATH=/workspace
@@ -114,6 +126,8 @@ services:
       - AGENT_LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - AGENT_LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - AGENT_LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
+      # Instance identification
+      - INSTANCE_NAME=${INSTANCE_NAME:-default}
 
     # Volume mounts
     volumes:
@@ -140,9 +154,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: ${SUPERVISOR_MEMORY_LIMIT:-4G}
         reservations:
-          memory: 1G
+          memory: ${SUPERVISOR_MEMORY_RESERVATION:-1G}
 
 networks:
   agentnet:
