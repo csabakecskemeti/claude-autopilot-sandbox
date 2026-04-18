@@ -452,6 +452,99 @@ Session (conversation)
 
 ---
 
+## Multi-Instance Deployment
+
+### Running Multiple Agents Simultaneously
+
+You can run multiple agent+supervisor pairs on the same machine. Each run automatically generates a unique instance name:
+
+```bash
+# Terminal 1: Auto-generates instance name (e.g., agent-a1b2c3d4)
+./run.sh project1 "Build a todo app"
+
+# Terminal 2: Another auto-generated instance
+./run.sh project2 "Build a chat app"
+
+# Terminal 3: Explicit instance name with custom port prefix
+INSTANCE_NAME=worker3 PORT_PREFIX=5 ./run.sh project3 "Build an API"
+```
+
+### Instance Isolation
+
+Each instance gets:
+- **Unique container names**: `claude-agent-worker2`, `claude-supervisor-worker2`
+- **Isolated network**: Via Docker Compose project name
+- **Separate ports**: PORT_OFFSET controls all external ports
+- **Independent workspaces**: Each project gets its own workspace folder
+
+### Port Mapping
+
+Port prefix (single digit) is prepended to container ports. Auto-generated from instance name hash (2-5, max 5 since 68000 > 65535):
+
+```
+PORT_PREFIX=2:
+  - 23000 → container:3000 (Node.js/React)
+  - 25000 → container:5000 (Flask)
+  - 28000 → container:8000 (Django/FastAPI)
+  - 28080 → container:8080 (General web)
+
+PORT_PREFIX=5:
+  - 53000 → container:3000
+  - 55000 → container:5000
+  - etc.
+```
+
+### Remote Supervisor Mode
+
+For distributed deployments (e.g., running agent on one machine, supervisor on DGX Spark):
+
+**On supervisor machine (DGX Spark):**
+```bash
+# Run supervisor only
+docker compose up supervisor
+# Exposed on port 8080 (or SUPERVISOR_EXTERNAL_PORT)
+```
+
+**On agent machine:**
+```bash
+# Run agent pointing to remote supervisor
+SKIP_LOCAL_SUPERVISOR=true \
+SUPERVISOR_URL=http://dgx-spark:8080 \
+./run.sh myproject "Build feature X"
+```
+
+### Different LLM Backends
+
+Supervisor can use a different LLM backend than the agent:
+
+```bash
+# Agent uses local LM Studio, supervisor uses DGX
+LLM_HOST=localhost \
+SUPERVISOR_LLM_HOST=dgx-spark \
+SUPERVISOR_LLM_PORT=8000 \
+./run.sh myproject "Build app"
+```
+
+This is useful when:
+- Supervisor needs a larger/better model
+- Load balancing across multiple GPUs
+- Using specialized models for evaluation
+
+### Environment Variables Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INSTANCE_NAME` | (random) | Unique identifier for this instance |
+| `PORT_PREFIX` | (2-5) | Single digit prepended to container ports |
+| `CONTAINER_PREFIX` | claude | Prefix for container names |
+| `SKIP_LOCAL_SUPERVISOR` | false | Use remote supervisor instead |
+| `SUPERVISOR_URL` | http://supervisor:8080 | Remote supervisor URL |
+| `SUPERVISOR_EXTERNAL_PORT` | 8080 | Port to expose supervisor on |
+| `SUPERVISOR_LLM_HOST` | (LLM_HOST) | LLM backend for supervisor |
+| `SUPERVISOR_LLM_PORT` | (LLM_PORT) | LLM port for supervisor |
+
+---
+
 ## Known Limitations
 
 ### 1. Hook Timeout
@@ -486,6 +579,15 @@ The supervisor evaluates live workspace state. If agent modifies files during ev
 Both containers share the same LLM backend. During evaluation, agent is blocked but LLM serves supervisor.
 
 **Mitigation**: Use LM Studio parallel mode for concurrent requests.
+
+### 6. Multi-Instance GPU Contention
+
+When running multiple instances, all agents share the same LLM backend which has limited GPU memory.
+
+**Mitigation**:
+- Use separate LLM backends per instance (e.g., different machines)
+- Configure supervisor to use different backend with `SUPERVISOR_LLM_HOST`
+- Stagger task starts to avoid concurrent heavy workloads
 
 ---
 
