@@ -1,20 +1,30 @@
 #!/bin/bash
 # Interactive setup wizard to create/edit .env file
+# Usage: ./setup-wizard.sh [env-file]
+#   env-file: Optional path to env file (default: .env)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_FILE="$PROJECT_DIR/.env"
+
+# Accept env file as argument, default to .env
+if [ -n "$1" ]; then
+    ENV_FILE="$PROJECT_DIR/$1"
+else
+    ENV_FILE="$PROJECT_DIR/.env"
+fi
 
 echo "========================================"
 echo "  Claude Autopilot Sandbox Setup"
 echo "========================================"
 echo ""
+echo "Config file: $ENV_FILE"
+echo ""
 
-# Load existing .env if present
+# Load existing env file if present
 if [ -f "$ENV_FILE" ]; then
-    echo "Loading existing .env file..."
+    echo "Loading existing config..."
     set -a
     source "$ENV_FILE"
     set +a
@@ -294,11 +304,17 @@ echo "========================================"
 echo "  Setup Complete!"
 echo "========================================"
 echo ""
-echo "Configuration saved to .env"
+echo "Configuration saved to: $ENV_FILE"
 echo ""
-echo "Next steps:"
-echo "  1. Review config:     make env"
-echo "  2. Test connection:   make test"
-echo "  3. Build images:      make build"
-echo "  4. Start an agent:    make run W=myproject T=\"your task\""
+if [ "$ENV_FILE" = "$PROJECT_DIR/.env" ]; then
+    echo "Next steps:"
+    echo "  1. Review config:     make env"
+    echo "  2. Test connection:   make test"
+    echo "  3. Build images:      make build"
+    echo "  4. Start an agent:    make run W=myproject T=\"your task\""
+else
+    ENV_NAME=$(basename "$ENV_FILE")
+    echo "Next steps:"
+    echo "  1. Start an agent:    make run W=myproject ENV=$ENV_NAME T=\"your task\""
+fi
 echo ""

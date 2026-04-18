@@ -1,15 +1,19 @@
 # Claude Autopilot Sandbox - Makefile
 # Run 'make help' for available commands
 
-.PHONY: help setup build build-clean run stop logs ps clean shell status prune test env
+.PHONY: help setup build build-clean run stop logs ps clean shell status prune test env env-clone
 
 # Default target
 help:
 	@echo "Claude Autopilot Sandbox"
 	@echo ""
 	@echo "Setup:"
-	@echo "  make setup          Interactive wizard to create .env file"
+	@echo "  make setup          Interactive wizard to create/edit .env"
+	@echo "  make setup ENV=.env2"
+	@echo "                      Create/edit alternate env file"
 	@echo "  make env            Show current config (secrets hidden)"
+	@echo "  make env-clone E=.env2"
+	@echo "                      Clone .env to new file (quick copy)"
 	@echo "  make test           Test LLM server connection"
 	@echo "  make build          Build Docker images"
 	@echo "  make build-clean    Build Docker images (no cache)"
@@ -19,6 +23,8 @@ help:
 	@echo "                      Start agent with workspace and task"
 	@echo "  make run W=myproject TF=task.txt"
 	@echo "                      Start agent with task from file (for complex prompts)"
+	@echo "  make run W=myproject ENV=.env2"
+	@echo "                      Start agent using alternate env file"
 	@echo "  make run W=myproject"
 	@echo "                      Start agent (interactive, no initial task)"
 	@echo ""
@@ -45,7 +51,11 @@ help:
 # ============================================================================
 
 setup:
+ifdef ENV
+	@./scripts/setup-wizard.sh $(ENV)
+else
 	@./scripts/setup-wizard.sh
+endif
 
 build:
 	docker compose build
@@ -63,6 +73,22 @@ env:
 		echo "No .env file found. Run 'make setup' first."; \
 	fi
 
+# Clone .env to a new file for customization
+# Usage: make env-clone E=.env2
+env-clone:
+ifndef E
+	@echo "Error: Target file required."
+	@echo "Usage: make env-clone E=.env2"
+	@exit 1
+endif
+	@if [ ! -f .env ]; then \
+		echo "No .env file found. Run 'make setup' first."; \
+		exit 1; \
+	fi
+	@cp .env $(E)
+	@echo "Created $(E) from .env"
+	@echo "Edit $(E), then run: make run W=myproject ENV=$(E)"
+
 test:
 	@if [ ! -f .env ]; then \
 		echo "No .env file found. Run 'make setup' first."; \
@@ -79,17 +105,22 @@ test:
 
 # Usage: make run W=workspace T="task description"
 #    or: make run W=workspace TF=task.txt  (read task from file)
+#    or: make run W=workspace ENV=.env2    (use alternate env file)
 run:
 ifndef W
 	@echo "Error: Workspace required."
 	@echo "Usage: make run W=myproject T=\"task\""
 	@echo "   or: make run W=myproject TF=task.txt"
+	@echo "   or: make run W=myproject ENV=.env2"
 	@exit 1
 endif
+ifdef ENV
+	@echo "Using env file: $(ENV)"
+endif
 ifdef TF
-	./run.sh "$(W)" "$$(cat $(TF))"
+	ENV_FILE=$(or $(ENV),.env) ./run.sh "$(W)" "$$(cat $(TF))"
 else
-	./run.sh "$(W)" "$(T)"
+	ENV_FILE=$(or $(ENV),.env) ./run.sh "$(W)" "$(T)"
 endif
 
 # ============================================================================

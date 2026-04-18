@@ -27,10 +27,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Load environment variables from .env if present
-if [ -f ".env" ]; then
+# Load environment variables from env file
+# Use ENV_FILE if set, otherwise default to .env
+ENV_FILE="${ENV_FILE:-.env}"
+if [ -f "$ENV_FILE" ]; then
     set -a
-    source .env
+    source "$ENV_FILE"
     set +a
 fi
 

@@ -102,6 +102,35 @@ Each instance is fully isolated with its own:
 - Port mappings (auto-generated prefix 2-5)
 - Workspace directories
 
+### Runtime Overrides
+
+Any `.env` variable can be overridden per-run:
+
+```bash
+# Agent 1 on default LLM
+make run W=proj1 T="task 1"
+
+# Agent 2 on different LLM
+LLM_HOST=dgx-spark-2.local make run W=proj2 T="task 2"
+
+# Agent 3 on yet another LLM
+LLM_HOST=192.168.1.200 LLM_MODEL=llama-70b make run W=proj3 T="task 3"
+```
+
+### Alternate Env Files
+
+Create separate configurations for different setups:
+
+```bash
+# Clone .env to a new file
+make env-clone E=.env-dgx2
+
+# Edit .env-dgx2 with different LLM_HOST, model, etc.
+
+# Run using the alternate config
+make run W=myproject ENV=.env-dgx2 T="task"
+```
+
 ### Port Mapping
 
 Port prefix (2-5) is auto-generated and prepended to container ports:
