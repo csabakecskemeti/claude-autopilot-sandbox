@@ -1,0 +1,10 @@
+# SearXNG Rate Limiter Configuration
+# Disabled for local use - no rate limiting needed
+
+[botdetection.ip_limit]
+# Disable IP-based rate limiting
+link_token = false
+
+[botdetection.ip_lists]
+# No blocked IPs
+block_ip = []

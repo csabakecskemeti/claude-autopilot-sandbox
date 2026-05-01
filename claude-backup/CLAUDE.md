@@ -68,13 +68,26 @@ All skills are in `~/.claude/skills/`. **Read each `SKILL.md` for usage.**
 | `/tasks` | Task tracking (NOT TodoWrite!) | **YES** — track all work |
 | `/supervisor` | Completion evaluation | **YES** — MUST call before done |
 | `/vision` | Image analysis, UI verification | **YES** for UI projects |
-| `/websearch` | Web search (DuckDuckGo) | When needed |
 | `/fetch` | Download URLs to files | When needed |
 | `/browser` | Playwright browser automation | When needed |
 | `/pkg-install` | Package installation | When needed |
 | `/memory` | Persistent memory | When needed |
 | `/file-convert` | Format conversion | When needed |
 | `/sql-query` | Database queries | When needed |
+
+## Web Search (MCP Tool)
+
+Use the `web_search` MCP tool for web searches:
+
+```
+Use the web_search tool to search for "your query here"
+```
+
+This tool:
+- Searches multiple engines (Bing, DuckDuckGo, Startpage, etc.)
+- Returns titles, URLs, snippets, and source engines
+- Fast (~1-2 seconds)
+- No rate limits
 
 ---
 

@@ -63,7 +63,24 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-claude}"
 
 # Remote supervisor mode (skip local supervisor container)
 SKIP_LOCAL_SUPERVISOR="${SKIP_LOCAL_SUPERVISOR:-false}"
-SUPERVISOR_URL="${SUPERVISOR_URL:-http://supervisor:8080}"
+# Default to standalone supervisor on host (use SUPERVISOR=1 for embedded mode)
+SUPERVISOR_URL="${SUPERVISOR_URL:-http://host.docker.internal:8080}"
+
+# SearXNG integration mode
+# SEARXNG=1 or INCLUDE_SEARXNG=true: start SearXNG with agent (same network)
+# Otherwise: agent uses host.docker.internal:8888 (run 'make searxng-start' first)
+INCLUDE_SEARXNG="${INCLUDE_SEARXNG:-${SEARXNG:-false}}"
+if [ "$INCLUDE_SEARXNG" = "1" ]; then
+    INCLUDE_SEARXNG="true"
+fi
+
+# Supervisor integration mode
+# SUPERVISOR=1 or INCLUDE_SUPERVISOR=true: start supervisor with agent (same network)
+# Otherwise: agent uses standalone supervisor at host.docker.internal:8080 (run 'make supervisor-start' first)
+INCLUDE_SUPERVISOR="${INCLUDE_SUPERVISOR:-${SUPERVISOR:-false}}"
+if [ "$INCLUDE_SUPERVISOR" = "1" ]; then
+    INCLUDE_SUPERVISOR="true"
+fi
 
 # Supervisor external port - also derived from instance if not set
 if [ -z "$SUPERVISOR_EXTERNAL_PORT" ]; then
@@ -136,6 +153,20 @@ if [ "$SKIP_LOCAL_SUPERVISOR" = "true" ]; then
 else
     echo "  Supervisor: LOCAL (port $SUPERVISOR_EXTERNAL_PORT)"
 fi
+if [ "$INCLUDE_SEARXNG" = "true" ]; then
+    echo "  SearXNG: INTEGRATED (same network)"
+    export SEARXNG_URL="http://searxng:8080"
+else
+    echo "  SearXNG: EXTERNAL (host.docker.internal:8888)"
+    echo "           Run 'make searxng-start' if not already running"
+fi
+if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
+    echo "  Supervisor: INTEGRATED (same network)"
+    export SUPERVISOR_URL="http://supervisor:8080"
+else
+    echo "  Supervisor: EXTERNAL (host.docker.internal:8080)"
+    echo "              Run 'make supervisor-start' if not already running"
+fi
 if [ -n "$ORIGINAL_TASK" ]; then
     echo "  Task: ${ORIGINAL_TASK:0:100}..."
 fi
@@ -143,6 +174,7 @@ echo ""
 
 # Export for docker-compose
 export WORKSPACE_PATH
+export WORKSPACE_NAME
 export SUPERVISOR_WORKSPACES
 export TASK_STORAGE
 export ORIGINAL_TASK
@@ -155,12 +187,23 @@ export SUPERVISOR_EXTERNAL_PORT
 # Docker Compose project name for isolation (allows multiple stacks)
 export COMPOSE_PROJECT_NAME="${CONTAINER_PREFIX}-${INSTANCE_NAME}"
 
-# Run with supervisor or agent-only (remote supervisor)
+# Build compose command with optional profiles
+COMPOSE_CMD="docker compose"
+if [ "$INCLUDE_SEARXNG" = "true" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD --profile searxng"
+fi
+if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD --profile supervisor"
+fi
+
+# Run agent
 # --service-ports: publish ports defined in docker-compose.yml
 # ORIGINAL_TASK env var is passed to container and used by entrypoint
-if [ "$SKIP_LOCAL_SUPERVISOR" = "true" ]; then
-    echo "Running agent-only mode (using remote supervisor at $SUPERVISOR_URL)"
-    docker compose run --rm --service-ports --no-deps agent
+echo ""
+if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
+    echo "Running with integrated supervisor..."
+    $COMPOSE_CMD run --rm --service-ports agent
 else
-    docker compose run --rm --service-ports agent
+    echo "Running with standalone supervisor..."
+    $COMPOSE_CMD run --rm --service-ports --no-deps agent
 fi

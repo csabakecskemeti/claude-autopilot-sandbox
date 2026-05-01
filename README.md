@@ -24,7 +24,11 @@ make setup
 # 3. Build containers
 make build
 
-# 4. Run with a task
+# 4. Start shared services
+make searxng-start      # Web search
+make supervisor-start   # Task validator
+
+# 5. Run with a task
 make run W=myproject T="Build a todo app with React"
 ```
 
@@ -148,38 +152,39 @@ Port prefix (2-5) is auto-generated and prepended to container ports:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  HOST (Makefile / run.sh)                                                   │
 │                                                                             │
-│  ./workspaces/myproject/            → Agent's workspace                     │
-│  ./workspaces/myproject-supervisor/ → Supervisor's workspaces (per turn)    │
-│  ./workspaces/myproject-task/       → IMMUTABLE task storage                │
+│  ./workspaces/                                                              │
+│    ├── proj1/         → Agent 1 workspace (rw)                              │
+│    ├── proj1-task/    → Agent 1 task (immutable)                            │
+│    ├── proj2/         → Agent 2 workspace (rw)                              │
+│    ├── proj2-task/    → Agent 2 task (immutable)                            │
+│    └── ...                                                                  │
 └─────────────────────────────────────────────────────────────────────────────┘
-              │                         │                    │
-              │ (rw)                    │ (rw)               │ (ro to both)
-              ▼                         ▼                    ▼
-┌──────────────────────────────┐    ┌──────────────────────────────┐
-│  Agent Container             │    │  Supervisor Container        │
-│                              │    │                              │
-│  /home/claude/workspace (rw) │    │  /supervisor-workspaces (rw) │
-│  /task (READ-ONLY)           │    │  /workspace (READ-ONLY)      │
-│                              │    │  /task (READ-ONLY)           │
-│  - Claude Code CLI           │───►│                              │
-│  - Full tool access          │    │  - Claude Code CLI           │
-│  - Skills, hooks             │    │  - Flask API (:8080)         │
-│  - Autonomous mode           │    │  - Evaluates task completion │
-│                              │◄───│  - Returns feedback          │
-│  Stop hook calls supervisor  │    │  - Same capabilities         │
-└──────────────────────────────┘    └──────────────────────────────┘
-              │                                      │
-              └──────────────┬───────────────────────┘
-                             │
-                    HTTP (OpenAI-compatible API)
-                             │
-              ┌──────────────────────────────────────┐
-              │  Your LLM Backend                    │
-              │  (LM Studio, Ollama, vLLM, etc.)     │
-              │                                      │
-              │  All containers use same LLM_HOST    │
-              │  (can override per-component)        │
-              └──────────────────────────────────────┘
+              │                                            │
+              ▼                                            ▼
+┌─────────────────────────────┐              ┌────────────────────────────────┐
+│  Agent Container 1          │              │  Shared Supervisor Container   │
+│  /home/claude/workspace     │──────────────│                                │
+│  /task (ro)                 │   HTTP POST  │  /workspaces (ro - all agents) │
+│                             │   /evaluate  │  /supervisor-workspaces (rw)   │
+│  Claude Code CLI + Skills   │◄─────────────│                                │
+└─────────────────────────────┘              │  Flask API (:8080)             │
+                                             │  Evaluates: proj1, proj2, ...  │
+┌─────────────────────────────┐              │                                │
+│  Agent Container 2          │──────────────│  Stop hook sends:              │
+│  /home/claude/workspace     │              │  {workspace, task, instance}   │
+│  /task (ro)                 │◄─────────────│                                │
+│                             │              └────────────────────────────────┘
+│  Claude Code CLI + Skills   │                            │
+└─────────────────────────────┘                            │
+              │                                            │
+              └────────────────────┬───────────────────────┘
+                                   │
+                          HTTP (OpenAI-compatible API)
+                                   │
+              ┌────────────────────────────────────────────┐
+              │  Your LLM Backend                          │
+              │  (LM Studio, Ollama, vLLM, etc.)           │
+              └────────────────────────────────────────────┘
 ```
 
 ## Configuration
@@ -265,42 +270,35 @@ SUPERVISOR_LANGFUSE_PROJECT=claude-supervisor
 
 ## How the Supervisor Works
 
-The supervisor is an **external Claude Code agent** that evaluates task completion:
+The supervisor is a **shared Claude Code agent** that validates task completion for all running agents:
 
 ```
-Agent works on task
-        │
-        ▼
-Agent tries to stop
-        │
-        ▼
-Stop hook calls supervisor API
-        │
-        ▼
-┌───────────────────────────────────────┐
-│  Supervisor Agent                     │
-│                                       │
-│  1. Reads original task (immutable)   │
-│  2. Explores agent's workspace        │
-│  3. Analyzes code, runs tests         │
-│  4. Determines: complete or not?      │
-│  5. Returns feedback                  │
-└───────────────────────────────────────┘
-        │
-        ▼
-   ┌────┴────┐
-   │         │
-complete  not_complete
-   │         │
-   ▼         ▼
- STOP    Agent continues
-         with feedback
+                        ┌─────────────────────────────────────┐
+                        │  Shared Supervisor (1 instance)     │
+                        │                                     │
+Agent 1 ──POST──────────│  Receives: workspace=proj1          │
+                        │  Evaluates /workspaces/proj1        │
+                        │  Returns: complete | not_complete   │
+                        │                                     │
+Agent 2 ──POST──────────│  Receives: workspace=proj2          │
+                        │  Evaluates /workspaces/proj2        │
+                        │  Instance-isolated loop counts      │
+                        └─────────────────────────────────────┘
 ```
+
+**Evaluation flow:**
+1. Agent tries to stop → Stop hook calls `POST /evaluate`
+2. Hook sends `{workspace, task, instance}` to identify which agent
+3. Supervisor creates isolated workspace for this evaluation turn
+4. Runs Claude Code CLI to explore agent's work
+5. Returns `complete` (allow stop) or `not_complete` (block with feedback)
+6. Agent continues with feedback until task is complete
 
 **Key features:**
-- Same capabilities as agent (can read files, run tests, use browser)
-- READ-ONLY access to agent workspace (can't modify agent's code)
-- Isolated workspaces per evaluation turn
+- **Shared service** - One supervisor serves multiple agents
+- **Instance isolation** - Separate loop counts per agent
+- Same capabilities as agent (can read files, run tests)
+- READ-ONLY access to agent workspaces (can't modify)
 - Max loop limit prevents infinite loops (default: 20)
 
 ## Skills
@@ -313,6 +311,7 @@ Skills are invoked with `/skillname` syntax:
 | `/tasks` | Track task progress |
 | `/vision` | Image analysis, UI verification, OCR |
 | `/webfetch` | Fetch and analyze URLs |
+| `/websearch` | Web search via SearXNG (see below) |
 | `/memory` | Persistent memory across sessions |
 | `/notes` | Note-taking system |
 
@@ -343,6 +342,79 @@ claude-autopilot-sandbox/
 └── docs/
     ├── ARCHITECTURE.md    # Detailed architecture docs
     └── TRACING.md         # Langfuse setup guide
+```
+
+## Web Search (SearXNG)
+
+Self-hosted meta-search engine for reliable, free web search:
+
+```bash
+# Option 1: Standalone (recommended)
+make searxng-start              # Start once, keep running
+make run W=myproject T="task"   # Agent connects via host network
+
+# Option 2: Integrated
+make run W=myproject T="task" SEARXNG=1   # SearXNG starts with agent
+```
+
+**Features:**
+- Aggregates from Bing, DuckDuckGo, Startpage, and more
+- If one engine blocks, others still work
+- Fast (~1-2 seconds per query)
+- MCP tool `web_search` auto-configured in agent
+
+**Management:**
+```bash
+make searxng-test     # Test search API
+make searxng-status   # Check health and engines
+make searxng-stop     # Stop standalone service
+```
+
+See `docs/SEARXNG.md` for full documentation.
+
+## Supervisor
+
+The supervisor is a shared service that validates task completion for all agents.
+
+### Running Modes
+
+**Standalone (recommended)** - One supervisor serves multiple agents:
+```bash
+make supervisor-start              # Start once, keep running
+make run W=proj1 T="task 1"        # Agent 1 uses shared supervisor
+make run W=proj2 T="task 2"        # Agent 2 uses same supervisor
+```
+
+**Embedded** - Supervisor starts with each agent (legacy behavior):
+```bash
+make run W=myproject T="task" SUPERVISOR=1
+```
+
+### Management Commands
+```bash
+make supervisor-start    # Start shared supervisor
+make supervisor-stop     # Stop supervisor
+make supervisor-status   # Check health and loop counts
+make supervisor-logs     # Follow supervisor logs
+make supervisor-build    # Rebuild supervisor image
+```
+
+### How It Works
+
+1. Agent works on task
+2. Agent tries to stop → Stop hook calls supervisor API
+3. Supervisor creates isolated workspace for this evaluation
+4. Supervisor runs Claude Code CLI to analyze agent's work
+5. Returns `complete` (allow stop) or `not_complete` (block with feedback)
+6. If not complete, agent continues with supervisor's feedback
+7. Loop until complete or max loops reached (default: 20)
+
+### Configuration
+
+```env
+SUPERVISOR_MAX_LOOPS=20     # Max evaluation rounds before force-allow
+SUPERVISOR_TIMEOUT=3600     # Timeout per evaluation (seconds)
+SUPERVISOR_PORT=8080        # External port for shared supervisor
 ```
 
 ## Troubleshooting

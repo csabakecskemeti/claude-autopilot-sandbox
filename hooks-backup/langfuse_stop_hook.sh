@@ -794,7 +794,18 @@ fi
 
 log "INFO" "Calling supervisor at $SUPERVISOR_URL/evaluate (timeout: ${SUPERVISOR_TIMEOUT}s)"
 
-RESPONSE=$(curl -s --max-time "$SUPERVISOR_TIMEOUT" -X POST "$SUPERVISOR_URL/evaluate" 2>&1)
+# Build supervisor request with workspace info (for shared supervisor mode)
+# WORKSPACE_NAME and INSTANCE_NAME are set by run.sh and passed to container
+WORKSPACE_NAME="${WORKSPACE_NAME:-default}"
+TASK_NAME="${WORKSPACE_NAME}-task"
+INSTANCE_ID="${INSTANCE_NAME:-default}"
+
+log "INFO" "Supervisor params: workspace=$WORKSPACE_NAME task=$TASK_NAME instance=$INSTANCE_ID"
+
+RESPONSE=$(curl -s --max-time "$SUPERVISOR_TIMEOUT" -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"workspace\": \"$WORKSPACE_NAME\", \"task\": \"$TASK_NAME\", \"instance\": \"$INSTANCE_ID\"}" \
+    "$SUPERVISOR_URL/evaluate" 2>&1)
 CURL_EXIT=$?
 
 if [ $CURL_EXIT -ne 0 ]; then

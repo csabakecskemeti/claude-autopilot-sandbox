@@ -1,0 +1,209 @@
+# SearXNG Settings - Optimized for Claude Code web search
+# See https://docs.searxng.org/admin/settings/index.html
+
+use_default_settings: true
+
+general:
+  instance_name: "Claude Search"
+  privacypolicy_url: false
+  donation_url: false
+  contact_url: false
+  enable_metrics: true   # Enable metrics endpoint at /stats
+  debug: true            # Enable verbose logging (shows queries)
+
+search:
+  # Enable JSON format for API access
+  formats:
+    - html
+    - json
+
+  # Safe search: 0=off, 1=moderate, 2=strict
+  safe_search: 0
+
+  # Default language
+  default_lang: "en"
+
+  # Autocomplete provider
+  autocomplete: ""
+
+  # Max results per page
+  max_page: 0
+
+server:
+  # Disable rate limiter for local use
+  limiter: false
+
+  # Don't proxy images
+  image_proxy: false
+
+  # Required secret key
+  secret_key: "searxng-claude-code-secret-key-change-me"
+
+  # Bind to all interfaces
+  bind_address: "0.0.0.0"
+  port: 8080
+
+  # HTTP settings
+  http_protocol_version: "1.1"
+
+# Valkey/Redis for caching (optional but recommended)
+valkey:
+  url: valkey://redis:6379/0
+
+# Outgoing request settings
+outgoing:
+  # Request timeout
+  request_timeout: 5.0
+
+  # Max parallel requests per engine
+  max_request_timeout: 15.0
+
+  # Pool connections
+  pool_connections: 100
+  pool_maxsize: 20
+
+  # Enable keepalive
+  enable_http2: true
+
+ui:
+  # Clean UI settings
+  static_use_hash: true
+  default_theme: simple
+  results_on_new_tab: false
+  infinite_scroll: false
+
+# Engine configuration
+# Focus on reliable, fast engines that don't block easily
+engines:
+
+  # === PRIMARY ENGINES (most reliable) ===
+
+  - name: bing
+    disabled: false
+    weight: 1.2
+    timeout: 4.0
+
+  - name: startpage
+    disabled: false
+    weight: 1.5  # Higher weight - Google results via proxy
+    timeout: 5.0
+
+  - name: duckduckgo
+    disabled: false
+    weight: 1.0
+    timeout: 4.0
+
+  - name: mojeek
+    disabled: false
+    weight: 0.8
+    timeout: 4.0
+
+  # === SECONDARY ENGINES (good fallbacks) ===
+
+  - name: yep
+    disabled: false
+    weight: 0.7
+    timeout: 4.0
+
+  - name: yahoo
+    disabled: false
+    weight: 0.8
+    timeout: 4.0
+
+  - name: wiby
+    disabled: false
+    weight: 0.5
+    timeout: 3.0
+
+  - name: curlie
+    engine: curlie
+    disabled: false
+    weight: 0.5
+    timeout: 3.0
+
+  # === SPECIALIZED ENGINES ===
+
+  # Wikipedia for facts
+  - name: wikipedia
+    disabled: false
+    weight: 1.0
+    timeout: 3.0
+
+  # Wikidata (disabled - initialization issues)
+  - name: wikidata
+    disabled: true
+    weight: 0.8
+    timeout: 3.0
+
+  # StackOverflow for programming
+  - name: stackoverflow
+    disabled: false
+    weight: 1.2
+    timeout: 3.0
+
+  # GitHub for code
+  - name: github
+    disabled: false
+    weight: 1.0
+    timeout: 4.0
+
+  # GitLab
+  - name: gitlab
+    disabled: false
+    weight: 0.8
+    timeout: 4.0
+
+  # npm for packages
+  - name: npm
+    disabled: false
+    weight: 0.8
+    timeout: 3.0
+
+  # PyPI for Python packages
+  - name: pypi
+    disabled: false
+    weight: 0.8
+    timeout: 3.0
+
+  # Crates.io for Rust
+  - name: crates.io
+    disabled: false
+    weight: 0.7
+    timeout: 3.0
+
+  # Docker Hub
+  - name: docker hub
+    disabled: false
+    weight: 0.8
+    timeout: 3.0
+
+  # Arch Wiki (great for linux/tech docs)
+  - name: archwiki
+    engine: archlinux
+    disabled: false
+    weight: 0.9
+    timeout: 3.0
+
+  # MDN for web docs
+  - name: mdn
+    disabled: false
+    weight: 1.1
+    timeout: 3.0
+
+  # === DISABLE PROBLEMATIC ENGINES ===
+
+  # Often blocked or rate-limited
+  - name: google
+    disabled: true
+
+  - name: brave
+    disabled: true  # Rate limits quickly
+
+  - name: qwant
+    disabled: true  # Parsing errors common
+
+  - name: google scholar
+    disabled: true
+
+  - name: google news
+    disabled: true

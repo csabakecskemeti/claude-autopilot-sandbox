@@ -25,7 +25,8 @@ services:
       - ANTHROPIC_AUTH_TOKEN=${LLM_AUTH_TOKEN:-lmstudio}
       # Disable extended thinking (local LLMs don't support it)
       - MAX_THINKING_TOKENS=0
-      - WHOOGLE_URL=${WHOOGLE_URL:-}
+      # SearXNG web search URL (run 'make searxng-start' on host)
+      - SEARXNG_URL=${SEARXNG_URL:-http://host.docker.internal:8888}
       # Vision model config (defaults to same backend as LLM, can override)
       - VISION_API_URL=http://${VISION_HOST:-${LLM_HOST}}:${VISION_PORT:-${LLM_PORT:-11234}}
       - VISION_API_TOKEN=${VISION_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
@@ -39,8 +40,9 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
-      # Supervisor URL - can be local (http://supervisor:8080) or remote (http://dgx-spark:8080)
-      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://supervisor:8080}
+      # Supervisor URL - default to standalone supervisor on host
+      # Use SUPERVISOR_URL=http://supervisor:8080 with SUPERVISOR=1 for embedded mode
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://host.docker.internal:8080}
       - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
       # Extra seconds added for Langfuse work; Claude Stop hook timeout = SUPERVISOR_TIMEOUT + this
       - STOP_HOOK_EXTRA_SEC=${STOP_HOOK_EXTRA_SEC:-1200}
@@ -50,6 +52,8 @@ services:
       - ORIGINAL_TASK=${ORIGINAL_TASK:-}
       # Instance identification (for logging/tracing)
       - INSTANCE_NAME=${INSTANCE_NAME:-default}
+      # Workspace name (for supervisor API - shared mode)
+      - WORKSPACE_NAME=${WORKSPACE_NAME:-default}
 
     # Volume mounts - only workspace, no config mounts
     volumes:
@@ -63,9 +67,13 @@ services:
     stdin_open: true
     tty: true
 
-    # Network for communication with supervisor (if local)
+    # Network for communication with supervisor and searxng
     networks:
       - agentnet
+
+    # Linux compatibility for host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     # Resource limits
     deploy:
@@ -75,18 +83,14 @@ services:
         reservations:
           memory: ${MEMORY_RESERVATION:-2G}
 
-    # Supervisor dependency (only if using local supervisor)
-    # Set SKIP_LOCAL_SUPERVISOR=true to use remote supervisor
-    depends_on:
-      supervisor:
-        condition: service_healthy
+    # NOTE: Supervisor is now a shared standalone service (make supervisor-start)
+    # To include supervisor in this stack instead, use: SUPERVISOR=1 make run ...
 
-  # External Supervisor container - Agent-based QA validator
-  # Uses Claude Code CLI to evaluate agent's work
-  # Has READ-ONLY access to agent workspace
-  #
-  # For remote supervisor: set SKIP_LOCAL_SUPERVISOR=true and SUPERVISOR_URL=http://remote:8080
+  # Embedded Supervisor (optional - only starts with SUPERVISOR=1 / --profile supervisor)
+  # For most cases, use the shared supervisor: make supervisor-start
   supervisor:
+    profiles:
+      - supervisor  # Only starts when profile is active
     build:
       context: ./supervisor
       dockerfile: Dockerfile
@@ -157,6 +161,25 @@ services:
           memory: ${SUPERVISOR_MEMORY_LIMIT:-4G}
         reservations:
           memory: ${SUPERVISOR_MEMORY_RESERVATION:-1G}
+
+# SearXNG web search service (optional but recommended)
+  # Start separately with: make searxng-start
+  # Or include here by setting INCLUDE_SEARXNG=true
+  searxng:
+    image: searxng/searxng:latest
+    container_name: ${CONTAINER_PREFIX:-claude}-searxng-${INSTANCE_NAME:-default}
+    profiles:
+      - searxng  # Only starts when profile is active
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro
+    networks:
+      - agentnet
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   agentnet:
