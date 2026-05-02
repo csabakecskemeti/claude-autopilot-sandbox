@@ -22,15 +22,26 @@ echo ""
 echo "Config file: $ENV_FILE"
 echo ""
 
-# Load existing env file if present
+# Load existing config as defaults
+# Priority: target file > main .env > hardcoded defaults
+MAIN_ENV="$PROJECT_DIR/.env"
+
 if [ -f "$ENV_FILE" ]; then
-    echo "Loading existing config..."
+    echo "Loading existing config from: $(basename "$ENV_FILE")"
     set -a
     source "$ENV_FILE"
     set +a
     echo "Current values will be shown as defaults."
-    echo ""
+elif [ -f "$MAIN_ENV" ] && [ "$ENV_FILE" != "$MAIN_ENV" ]; then
+    echo "New file - loading defaults from: .env"
+    set -a
+    source "$MAIN_ENV"
+    set +a
+    echo "Values from .env will be shown as defaults."
+else
+    echo "No existing config found - using hardcoded defaults."
 fi
+echo ""
 
 echo "Press Enter to accept defaults shown in [brackets]."
 echo "Leave empty and press Enter to keep current value or use default."

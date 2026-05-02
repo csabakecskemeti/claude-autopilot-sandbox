@@ -17,7 +17,8 @@ help:
 	@echo "  make env            Show current config (secrets hidden)"
 	@echo "  make env-clone E=.env2"
 	@echo "                      Clone .env to new file (quick copy)"
-	@echo "  make test           Test LLM server connection"
+	@echo "  make test           Test LLM and services connection"
+	@echo "  make test ENV=.env2 Test with alternate config"
 	@echo "  make build          Build Docker images"
 	@echo "  make build-clean    Build Docker images (no cache)"
 	@echo ""
@@ -117,13 +118,16 @@ endif
 	@echo "Edit $(E), then run: make run W=myproject ENV=$(E)"
 
 test:
-	@if [ ! -f .env ]; then \
-		echo "No .env file found. Run 'make setup' first."; \
+	@ENV_FILE="$${ENV:-.env}"; \
+	if [ ! -f "$$ENV_FILE" ]; then \
+		echo "No $$ENV_FILE file found. Run 'make setup' first."; \
 		exit 1; \
-	fi
-	@echo "=== LLM Server ==="
-	@. ./.env && echo "Testing $$LLM_HOST:$$LLM_PORT..."
-	@. ./.env && curl -s --max-time 5 "http://$$LLM_HOST:$$LLM_PORT/v1/models" > /dev/null \
+	fi; \
+	echo "=== Config: $$ENV_FILE ==="; \
+	echo ""; \
+	echo "=== LLM Server ==="; \
+	. ./$$ENV_FILE && echo "Testing $$LLM_HOST:$$LLM_PORT..."; \
+	. ./$$ENV_FILE && curl -s --max-time 5 "http://$$LLM_HOST:$$LLM_PORT/v1/models" > /dev/null \
 		&& echo "  OK - LLM server reachable" \
 		|| echo "  FAILED - Cannot reach LLM server"
 	@echo ""
