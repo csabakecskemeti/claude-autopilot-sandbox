@@ -3,7 +3,7 @@
 
 .PHONY: help setup build build-base build-clean run stop logs ps clean shell status prune test env env-clone \
         searxng-start searxng-stop searxng-status searxng-test searxng-logs \
-        supervisor-start supervisor-stop supervisor-status supervisor-logs supervisor-build \
+        supervisor-start supervisor-stop supervisor-status supervisor-logs supervisor-build supervisor-instances supervisor-history \
         langfuse-install langfuse-start langfuse-stop langfuse-status langfuse-logs langfuse-clean
 
 # Default target
@@ -63,6 +63,10 @@ help:
 	@echo "  make supervisor-status  Check supervisor health"
 	@echo "  make supervisor-logs    Follow supervisor logs"
 	@echo "  make supervisor-build   Rebuild supervisor image"
+	@echo "  make supervisor-instances"
+	@echo "                          List active agent instances"
+	@echo "  make supervisor-history I=agent-xxx"
+	@echo "                          Show evaluation history for instance"
 	@echo ""
 	@echo "Langfuse (Tracing - auto-installs to .langfuse/):"
 	@echo "  make langfuse-start     Start Langfuse (auto-clones if needed)"
@@ -309,15 +313,16 @@ searxng-logs:
 
 supervisor-build:
 	@echo "Building supervisor image..."
-	@cd supervisor && docker compose build
+	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && cd supervisor && docker compose build
 
 supervisor-start:
-	@if [ ! -f .env ]; then \
-		echo "No .env file found. Run 'make setup' first."; \
+	@ENV_FILE="$${ENV:-.env}"; \
+	if [ ! -f "$$ENV_FILE" ]; then \
+		echo "No $$ENV_FILE file found. Run 'make setup' first."; \
 		exit 1; \
-	fi
-	@echo "Starting shared supervisor service..."
-	@set -a && . ./.env && set +a && cd supervisor && docker compose up -d
+	fi; \
+	echo "Starting shared supervisor service (config: $$ENV_FILE)..."; \
+	set -a && . ./$$ENV_FILE && set +a && cd supervisor && docker compose up -d
 	@echo ""
 	@echo "Supervisor is starting at http://localhost:$${SUPERVISOR_PORT:-8080}"
 	@echo ""
@@ -329,13 +334,19 @@ supervisor-start:
 
 supervisor-stop:
 	@echo "Stopping supervisor..."
-	@cd supervisor && docker compose down
+	@ENV_FILE="$${ENV:-.env}"; \
+	if [ -f "$$ENV_FILE" ]; then set -a && . ./$$ENV_FILE && set +a; fi && cd supervisor && docker compose down
 
 supervisor-status:
 	@echo "=== Supervisor Status ==="
 	@docker ps --filter "name=claude-supervisor" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "Supervisor not running"
 	@echo ""
-	@if curl -s --max-time 2 "http://localhost:$${SUPERVISOR_PORT:-8080}/health" 2>/dev/null | jq -r '"API Status: ONLINE\nLoop counts: " + (.loop_count | tostring) + "/" + (.max_loops | tostring)' 2>/dev/null; then \
+	@if docker inspect claude-supervisor >/dev/null 2>&1; then \
+		echo "LLM Host: $$(docker exec claude-supervisor printenv ANTHROPIC_BASE_URL 2>/dev/null || echo 'N/A')"; \
+		echo "LLM Model: $$(docker exec claude-supervisor printenv LLM_MODEL 2>/dev/null || echo 'N/A')"; \
+		echo ""; \
+	fi
+	@if curl -s --max-time 2 "http://localhost:$${SUPERVISOR_PORT:-8080}/health" 2>/dev/null | jq -r '"API Status: ONLINE\nLoop count: " + (.loop_count | tostring) + "/" + (.max_loops | tostring) + "\nActive instances: " + (.active_instances | tostring)' 2>/dev/null; then \
 		:; \
 	else \
 		echo "API Status: OFFLINE"; \
@@ -343,7 +354,23 @@ supervisor-status:
 	fi
 
 supervisor-logs:
-	@cd supervisor && docker compose logs -f
+	@if [ -f .env ]; then set -a && . ./.env && set +a; fi && cd supervisor && docker compose logs -f
+
+supervisor-instances:
+	@echo "=== Active Agent Instances ==="
+	@curl -s "http://localhost:$${SUPERVISOR_PORT:-8080}/instances" 2>/dev/null | \
+		jq -r '.instances[] | "  \(.instance_id): loop \(.current_loop), \(.evaluations) evals, last: \(.last_status // "none")"' 2>/dev/null || \
+		echo "Supervisor not running or no instances"
+
+supervisor-history:
+ifndef I
+	@echo "Usage: make supervisor-history I=agent-abc123"
+	@exit 1
+endif
+	@echo "=== Evaluation History for $(I) ==="
+	@curl -s "http://localhost:$${SUPERVISOR_PORT:-8080}/history/$(I)" 2>/dev/null | \
+		jq -r '.evaluations[] | "  [\(.timestamp)] loop \(.loop): \(.status)"' 2>/dev/null || \
+		echo "No history found"
 
 # ============================================================================
 # Langfuse Tracing Service (auto-installs to .langfuse/)

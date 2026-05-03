@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import logging
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request
@@ -95,6 +96,65 @@ def reset_loop_count(suffix: str = ""):
     counter_file = Path(SUPERVISOR_WORKSPACES) / f".loop_count{suffix}"
     if counter_file.exists():
         counter_file.unlink()
+
+
+def get_history_file(instance_id: str) -> Path:
+    """Get path to evaluation history file for an instance"""
+    return Path(SUPERVISOR_WORKSPACES) / f".history_{instance_id}.jsonl"
+
+
+def save_evaluation(instance_id: str, loop: int, status: str, output: str, workspace: str = None):
+    """Save evaluation result to instance history (JSONL format)"""
+    history_file = get_history_file(instance_id)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "instance": instance_id,
+        "loop": loop,
+        "status": status,
+        "workspace": workspace,
+        "output_preview": output[:500] if output else "",
+        "output_length": len(output) if output else 0
+    }
+    with open(history_file, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    log.info(f"Saved evaluation to history: {instance_id} loop={loop} status={status}")
+
+
+def get_evaluation_history(instance_id: str) -> list:
+    """Get evaluation history for an instance"""
+    history_file = get_history_file(instance_id)
+    if not history_file.exists():
+        return []
+
+    history = []
+    with open(history_file, "r") as f:
+        for line in f:
+            try:
+                history.append(json.loads(line.strip()))
+            except json.JSONDecodeError:
+                continue
+    return history
+
+
+def list_instances() -> list:
+    """List all known instance IDs from history files"""
+    instances = []
+    supervisor_dir = Path(SUPERVISOR_WORKSPACES)
+    if not supervisor_dir.exists():
+        return instances
+
+    for f in supervisor_dir.glob(".history_*.jsonl"):
+        instance_id = f.stem.replace(".history_", "")
+        history = get_evaluation_history(instance_id)
+        loop_count = get_loop_count(f"_{instance_id}" if instance_id != "default" else "")
+        instances.append({
+            "instance_id": instance_id,
+            "evaluations": len(history),
+            "current_loop": loop_count,
+            "last_status": history[-1]["status"] if history else None,
+            "last_evaluation": history[-1]["timestamp"] if history else None
+        })
+    return instances
 
 
 def read_original_task(workspace_path: str = None, task_path: str = None) -> str:
@@ -325,6 +385,9 @@ def evaluate():
     # Run supervisor
     status, output = run_supervisor(prompt, turn_workspace)
 
+    # Save evaluation to history
+    save_evaluation(instance_id, loop_count, status, output, workspace_path)
+
     # Reset loop counter on completion
     if status == "complete":
         reset_loop_count(loop_file_suffix)
@@ -349,20 +412,64 @@ def evaluate():
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint"""
+    """Health check endpoint with optional instance stats"""
+    instances = list_instances()
     return jsonify({
         "status": "healthy",
         "service": "supervisor",
         "loop_count": get_loop_count(),
-        "max_loops": MAX_LOOPS
+        "max_loops": MAX_LOOPS,
+        "active_instances": len(instances),
+        "instances": instances
+    })
+
+
+@app.route("/instances", methods=["GET"])
+def instances():
+    """List all agent instances with their evaluation history"""
+    return jsonify({
+        "instances": list_instances()
+    })
+
+
+@app.route("/history/<instance_id>", methods=["GET"])
+def history(instance_id: str):
+    """Get evaluation history for a specific instance"""
+    evals = get_evaluation_history(instance_id)
+    loop_count = get_loop_count(f"_{instance_id}" if instance_id != "default" else "")
+    return jsonify({
+        "instance_id": instance_id,
+        "current_loop": loop_count,
+        "evaluations": evals
     })
 
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    """Reset loop counter (for testing)"""
-    reset_loop_count()
-    return jsonify({"status": "reset", "loop_count": 0})
+    """Reset loop counter and optionally history for an instance"""
+    if request.is_json:
+        data = request.get_json()
+        instance_id = data.get("instance")
+    else:
+        instance_id = request.args.get("instance")
+
+    if instance_id:
+        # Reset specific instance
+        loop_file_suffix = f"_{instance_id}" if instance_id != "default" else ""
+        reset_loop_count(loop_file_suffix)
+
+        # Optionally clear history
+        if request.args.get("clear_history") == "true" or (request.is_json and data.get("clear_history")):
+            history_file = get_history_file(instance_id)
+            if history_file.exists():
+                history_file.unlink()
+                log.info(f"Cleared history for instance: {instance_id}")
+
+        return jsonify({"status": "reset", "instance": instance_id, "loop_count": 0})
+    else:
+        # Reset global (legacy)
+        reset_loop_count()
+        return jsonify({"status": "reset", "loop_count": 0})
 
 
 if __name__ == "__main__":
