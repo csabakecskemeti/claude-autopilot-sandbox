@@ -6,18 +6,14 @@ services:
       dockerfile: Dockerfile
       args:
         - LLM_MODEL=${LLM_MODEL:?Set LLM_MODEL in .env}
-    # Container name includes instance for uniqueness (optional override)
-    container_name: ${CONTAINER_PREFIX:-claude}-agent-${INSTANCE_NAME:-default}
+    # Container name from run.sh (includes task name and timestamp)
+    container_name: ${AGENT_CONTAINER:-claude-agent-default}
 
-    # Port mappings - configurable via PORT_PREFIX for multi-instance
-    # PORT_PREFIX is a single digit prepended to container port
-    # Default prefix is 2, so: 3000->23000, 5000->25000, 8000->28000, 8080->28080
-    # Set PORT_PREFIX=3 for second instance: 3000->33000, etc.
+    # Port mappings - dynamically allocated by run.sh
     ports:
-      - "${PORT_PREFIX:-2}3000:3000"   # Node.js/React (default 23000)
-      - "${PORT_PREFIX:-2}5000:5000"   # Flask (default 25000)
-      - "${PORT_PREFIX:-2}8000:8000"   # Django/FastAPI (default 28000)
-      - "${PORT_PREFIX:-2}8080:8080"   # General web (default 28080)
+      - "${PORT_AGENT_3000:-30000}:3000"   # Node.js/React
+      - "${PORT_AGENT_5000:-30001}:5000"   # Flask
+      - "${PORT_AGENT_8000:-30002}:8000"   # Django/FastAPI
 
     # Environment variables for local LLM
     environment:
@@ -40,9 +36,8 @@ services:
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
-      # Supervisor URL - default to standalone supervisor on host
-      # Use SUPERVISOR_URL=http://supervisor:8080 with SUPERVISOR=1 for embedded mode
-      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://host.docker.internal:8080}
+      # Supervisor URL - always use embedded supervisor
+      - SUPERVISOR_URL=${SUPERVISOR_URL:-http://supervisor:8080}
       - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
       # Extra seconds added for Langfuse work; Claude Stop hook timeout = SUPERVISOR_TIMEOUT + this
       - STOP_HOOK_EXTRA_SEC=${STOP_HOOK_EXTRA_SEC:-1200}
@@ -50,24 +45,21 @@ services:
       - SUPERVISOR_AUTONOMY_APPEND=${SUPERVISOR_AUTONOMY_APPEND:-true}
       # Initial task (passed from run.sh)
       - ORIGINAL_TASK=${ORIGINAL_TASK:-}
-      # Instance identification (for logging/tracing)
-      - INSTANCE_NAME=${INSTANCE_NAME:-default}
-      # Workspace name (for supervisor API - shared mode)
+      # Task/workspace name (for supervisor API)
       - WORKSPACE_NAME=${WORKSPACE_NAME:-default}
 
-    # Volume mounts - only workspace, no config mounts
+    # Volume mounts
     volumes:
-      # Main workspace - use WORKSPACE_PATH env var for custom location
-      # Set WORKSPACE_BASE in .env to use internal drive (avoid exFAT issues)
+      # Main workspace (worker directory)
       - ${WORKSPACE_PATH:-./workspaces/default}:/home/claude/workspace
-      # Immutable task storage (read-only - neither agent nor supervisor can modify)
+      # Immutable task storage (read-only)
       - ${TASK_STORAGE:-./workspaces/default-task}:/task:ro
 
     # Keep container running for interactive use
     stdin_open: true
     tty: true
 
-    # Network for communication with supervisor and searxng
+    # Network for communication with supervisor
     networks:
       - agentnet
 
@@ -83,68 +75,66 @@ services:
         reservations:
           memory: ${MEMORY_RESERVATION:-2G}
 
-    # NOTE: Supervisor is now a shared standalone service (make supervisor-start)
-    # To include supervisor in this stack instead, use: SUPERVISOR=1 make run ...
+    # Wait for supervisor to be ready
+    depends_on:
+      supervisor:
+        condition: service_healthy
 
-  # Embedded Supervisor (optional - only starts with SUPERVISOR=1 / --profile supervisor)
-  # For most cases, use the shared supervisor: make supervisor-start
+  # Dedicated Supervisor (one per agent, always included)
   supervisor:
-    profiles:
-      - supervisor  # Only starts when profile is active
     build:
       context: ./supervisor
       dockerfile: Dockerfile
-    container_name: ${CONTAINER_PREFIX:-claude}-supervisor-${INSTANCE_NAME:-default}
+    container_name: ${SUPERVISOR_CONTAINER:-claude-supervisor-default}
 
-    # Expose supervisor port for remote access
-    # Default: 8080 (use SUPERVISOR_PORT_OFFSET for multiple supervisors)
+    # Supervisor port - dynamically allocated
     ports:
-      - "${SUPERVISOR_EXTERNAL_PORT:-8080}:8080"
+      - "${PORT_SUPERVISOR:-30003}:8080"
 
     # Environment variables
     environment:
-      # LLM configuration - can be different from agent (e.g., different host)
+      # LLM configuration (same as agent by default)
       - ANTHROPIC_BASE_URL=http://${SUPERVISOR_LLM_HOST:-${LLM_HOST}}:${SUPERVISOR_LLM_PORT:-${LLM_PORT:-11234}}
       - ANTHROPIC_AUTH_TOKEN=${SUPERVISOR_LLM_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
       - LLM_MODEL=${SUPERVISOR_LLM_MODEL:-${LLM_MODEL:-}}
-      # Disable extended thinking (local LLMs don't support it)
+      # Disable extended thinking
       - MAX_THINKING_TOKENS=0
-      # Vision model config (same as agent - for screenshot analysis)
+      # Vision model config
       - VISION_API_URL=http://${SUPERVISOR_LLM_HOST:-${LLM_HOST}}:${SUPERVISOR_LLM_PORT:-${LLM_PORT:-11234}}
       - VISION_API_TOKEN=${SUPERVISOR_LLM_AUTH_TOKEN:-${LLM_AUTH_TOKEN:-lmstudio}}
       - VISION_MODEL=${VISION_MODEL:-qwen/qwen3-vl-4b}
-      # Supervisor settings
+      # Supervisor settings - paths inside container
       - WORKSPACE_PATH=/workspace
       - SUPERVISOR_WORKSPACES=/supervisor-workspaces
       - TASK_STORAGE=/task
       - SUPERVISOR_MAX_LOOPS=${SUPERVISOR_MAX_LOOPS:-20}
       - SUPERVISOR_TIMEOUT=${SUPERVISOR_TIMEOUT:-3600}
-      # Supervisor's own Langfuse tracing (separate project)
+      # Supervisor's own Langfuse tracing
       - SUPERVISOR_TRACE_TO_LANGFUSE=${SUPERVISOR_TRACE_TO_LANGFUSE:-false}
       - SUPERVISOR_LANGFUSE_PUBLIC_KEY=${SUPERVISOR_LANGFUSE_PUBLIC_KEY:-}
       - SUPERVISOR_LANGFUSE_SECRET_KEY=${SUPERVISOR_LANGFUSE_SECRET_KEY:-}
       - SUPERVISOR_LANGFUSE_PROJECT=${SUPERVISOR_LANGFUSE_PROJECT:-claude-supervisor}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3000}
       - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
-      # Agent's Langfuse credentials (for supervisor to review agent traces)
-      - AGENT_LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
-      - AGENT_LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
-      - AGENT_LANGFUSE_PROJECT=${LANGFUSE_PROJECT:-claude-code}
-      # Instance identification
-      - INSTANCE_NAME=${INSTANCE_NAME:-default}
+      # Task/workspace name
+      - WORKSPACE_NAME=${WORKSPACE_NAME:-default}
 
-    # Volume mounts
+    # Volume mounts - dedicated to this agent
     volumes:
       # Agent workspace (read-only for evaluation)
       - ${WORKSPACE_PATH:-./workspaces/default}:/workspace:ro
-      # Supervisor's own workspaces (for turn isolation)
+      # Supervisor's workspaces (visible from host - for turn isolation and output visibility)
       - ${SUPERVISOR_WORKSPACES:-./workspaces/supervisor}:/supervisor-workspaces
-      # Immutable task storage (read-only - neither agent nor supervisor can modify)
+      # Immutable task storage (read-only)
       - ${TASK_STORAGE:-./workspaces/default-task}:/task:ro
 
     # Network for communication with agent
     networks:
       - agentnet
+
+    # Linux compatibility
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     # Health check
     healthcheck:
@@ -154,7 +144,7 @@ services:
       retries: 3
       start_period: 30s
 
-    # Resource limits (supervisor runs Claude CLI)
+    # Resource limits
     deploy:
       resources:
         limits:
@@ -162,14 +152,12 @@ services:
         reservations:
           memory: ${SUPERVISOR_MEMORY_RESERVATION:-1G}
 
-# SearXNG web search service (optional but recommended)
-  # Start separately with: make searxng-start
-  # Or include here by setting INCLUDE_SEARXNG=true
+  # SearXNG web search service (optional)
   searxng:
     image: searxng/searxng:latest
-    container_name: ${CONTAINER_PREFIX:-claude}-searxng-${INSTANCE_NAME:-default}
+    container_name: ${CONTAINER_PREFIX:-claude}-searxng-${WORKSPACE_NAME:-default}
     profiles:
-      - searxng  # Only starts when profile is active
+      - searxng
     volumes:
       - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
       - ./searxng/limiter.toml:/etc/searxng/limiter.toml:ro

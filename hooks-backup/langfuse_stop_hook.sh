@@ -756,16 +756,87 @@ WORKSPACE_DIR=$(echo "$STDIN_CONTENT" | jq -r '.cwd // ""')
 
 log "INFO" "=== Supervisor validation === workspace=$WORKSPACE_DIR stop_hook_active=$STOP_HOOK_ACTIVE url=$SUPERVISOR_URL"
 
+update_metadata() {
+    local status="$1"
+    local reason="$2"
+
+    # metadata.json is in parent of workspace (workspace is TASK_DIR/worker, metadata is TASK_DIR/metadata.json)
+    local metadata_file=""
+    if [ -n "$WORKSPACE_DIR" ]; then
+        # Try parent directory first (new structure: worker/ is inside task folder)
+        local parent_dir=$(dirname "$WORKSPACE_DIR")
+        if [ -f "$parent_dir/metadata.json" ]; then
+            metadata_file="$parent_dir/metadata.json"
+        fi
+    fi
+
+    if [ -n "$metadata_file" ] && [ -f "$metadata_file" ]; then
+        local stop_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        local tmp_file="${metadata_file}.tmp"
+
+        if jq --arg stop_time "$stop_time" \
+              --arg status "$status" \
+              --arg reason "$reason" \
+              --argjson cycles "$CURRENT_CYCLE" \
+              '.status.state = $status |
+               .status.stop_time = $stop_time |
+               .status.final_reason = $reason |
+               .status.continue_cycles = $cycles' \
+              "$metadata_file" > "$tmp_file" 2>/dev/null; then
+            mv "$tmp_file" "$metadata_file"
+            log "INFO" "Updated metadata.json: status=$status"
+        else
+            log "WARN" "Failed to update metadata.json"
+            rm -f "$tmp_file" 2>/dev/null || true
+        fi
+    else
+        log "INFO" "No metadata.json found (legacy structure or path issue)"
+    fi
+}
+
 allow_stop() {
     local reason="$1"
     log "INFO" "Allowing stop: $reason"
+    update_metadata "stopped" "$reason"
     rm -f "$CYCLE_COUNTER_FILE" 2>/dev/null || true
     exit 0
+}
+
+update_supervisor_evaluation() {
+    local eval_status="$1"
+
+    # metadata.json is in parent of workspace
+    local metadata_file=""
+    if [ -n "$WORKSPACE_DIR" ]; then
+        local parent_dir=$(dirname "$WORKSPACE_DIR")
+        if [ -f "$parent_dir/metadata.json" ]; then
+            metadata_file="$parent_dir/metadata.json"
+        fi
+    fi
+
+    if [ -n "$metadata_file" ] && [ -f "$metadata_file" ]; then
+        local eval_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        local tmp_file="${metadata_file}.tmp"
+
+        if jq --arg eval_time "$eval_time" \
+              --arg eval_status "$eval_status" \
+              --argjson cycles "$CURRENT_CYCLE" \
+              '.supervisor_results.total_evaluations = $cycles |
+               .supervisor_results.last_status = $eval_status |
+               .supervisor_results.last_evaluation = $eval_time' \
+              "$metadata_file" > "$tmp_file" 2>/dev/null; then
+            mv "$tmp_file" "$metadata_file"
+            log "INFO" "Updated metadata.json supervisor_results: status=$eval_status cycles=$cycles"
+        else
+            rm -f "$tmp_file" 2>/dev/null || true
+        fi
+    fi
 }
 
 block_stop() {
     local reason="$1"
     log "INFO" "Blocking stop (reason length ${#reason})"
+    update_supervisor_evaluation "not_complete"
     jq -n --arg reason "$reason" '{decision: "block", reason: $reason}'
     exit 0
 }
@@ -819,6 +890,7 @@ MESSAGE=$(echo "$RESPONSE" | jq -r '.message // "No message from supervisor"')
 log "INFO" "Supervisor status=$STATUS message_preview=${MESSAGE:0:200}..."
 
 if [ "$STATUS" = "complete" ]; then
+    update_supervisor_evaluation "complete"
     allow_stop "Supervisor verified completion"
 else
     # Optional hardcoded nudge for headless / autonomous runs (supervisor text is often long).

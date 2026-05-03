@@ -1,25 +1,22 @@
 #!/bin/bash
-# Run Claude Code with isolated workspace and external supervisor
+# Run Claude Code with isolated workspace and dedicated supervisor
 #
 # Usage:
-#   ./run.sh                              # Uses 'default' workspace
-#   ./run.sh myproject                    # Uses 'myproject' workspace
-#   ./run.sh myproject "Build a todo app" # With initial task
+#   ./run.sh myproject "Build a todo app"     # With task
+#   ./run.sh myproject TF=task.txt            # Task from file
+#   ./run.sh myproject                         # Interactive (no task)
+#   ENV=.env-dgx2 ./run.sh myproject "task"   # With specific env file
 #
-# Multi-Instance Support (instance names and ports auto-generated):
-#   ./run.sh proj1 "Build a todo app"    # agent-a1b2..., ports 23000, 25000...
-#   ./run.sh proj2 "Build a chat app"    # agent-e5f6..., ports 43000, 45000...
-#   PORT_PREFIX=6 ./run.sh proj3 "Build API"  # explicit ports 63000, 65000...
-#
-# Remote Supervisor (run on different machine, e.g., DGX Spark):
-#   SKIP_LOCAL_SUPERVISOR=true SUPERVISOR_URL=http://dgx-spark:8080 ./run.sh myproj
-#
-# Workspaces are stored in $WORKSPACE_BASE/<name>/ (default: ./workspaces/)
-# Each workspace is isolated and mapped to /home/claude/workspace in container
+# Each task creates an isolated folder structure:
+#   $WORKSPACE_BASE/{name}_{timestamp}/
+#   ├── worker/       # Agent workspace
+#   ├── task/         # Immutable task storage
+#   ├── supervisor/   # Supervisor workspace (visible from host)
+#   └── metadata.json # Task configuration and status
 #
 # Architecture:
 #   - Agent container: Runs Claude Code with full filesystem access
-#   - Supervisor container: Validates task completion (read-only access)
+#   - Supervisor container: Dedicated per-agent, validates task completion
 #   - Stop hook calls supervisor API to verify completion before allowing stop
 
 set -e
@@ -28,182 +25,259 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Load environment variables from env file
-# Use ENV_FILE if set, otherwise default to .env
-ENV_FILE="${ENV_FILE:-.env}"
+ENV_FILE="${ENV_FILE:-${ENV:-.env}}"
 if [ -f "$ENV_FILE" ]; then
     set -a
     source "$ENV_FILE"
     set +a
+    echo "Using config: $ENV_FILE"
 fi
 
 # Command line args
 WORKSPACE_NAME="${1:-${WORKSPACE_NAME:-default}}"
 ORIGINAL_TASK="${2:-${ORIGINAL_TASK:-}}"
 
-# Instance identification (for multi-instance deployments)
-# Generate random instance name if not specified (allows multiple parallel runs)
-if [ -z "$INSTANCE_NAME" ]; then
-    INSTANCE_NAME="agent-$(head -c 4 /dev/urandom | xxd -p)"
+# Check if task is a file reference (TF=filename)
+if [[ "$ORIGINAL_TASK" == TF=* ]]; then
+    TASK_FILE="${ORIGINAL_TASK#TF=}"
+    if [ -f "$TASK_FILE" ]; then
+        ORIGINAL_TASK="$(cat "$TASK_FILE")"
+    else
+        echo "Error: Task file not found: $TASK_FILE"
+        exit 1
+    fi
 fi
 
-# Compute hash from instance name for deterministic port assignment
-INSTANCE_HASH=$(echo -n "$INSTANCE_NAME" | md5sum | cut -c1-4)
-INSTANCE_HASH_NUM=$((16#$INSTANCE_HASH))
+# Timestamp for unique folder name
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+TASK_FULL_NAME="${WORKSPACE_NAME}_${TIMESTAMP}"
 
-# Port prefix for multi-instance - single digit prepended to container ports
-# Example: PORT_PREFIX=2 → 23000, 25000, 28000, 28080
-# Example: PORT_PREFIX=3 → 33000, 35000, 38000, 38080
-# Max is 5 (58080 < 65535, but 68000 > 65535), so range is 2-5
-if [ -z "$PORT_PREFIX" ]; then
-    PORT_PREFIX=$((2 + (INSTANCE_HASH_NUM % 4)))
-fi
+# Workspace base directory (default: ./workspaces relative to project)
+WORKSPACE_BASE="${WORKSPACE_BASE:-$SCRIPT_DIR/workspaces}"
 
-# Container naming prefix
+# Task directory (parent folder containing all task artifacts)
+TASK_DIR="$WORKSPACE_BASE/$TASK_FULL_NAME"
+
+# Subdirectories within task folder
+WORKSPACE_PATH="$TASK_DIR/worker"
+TASK_STORAGE="$TASK_DIR/task"
+SUPERVISOR_WORKSPACES="$TASK_DIR/supervisor"
+METADATA_FILE="$TASK_DIR/metadata.json"
+
+# Container naming (based on task name, not random)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-claude}"
+AGENT_CONTAINER="${CONTAINER_PREFIX}-agent-${TASK_FULL_NAME}"
+SUPERVISOR_CONTAINER="${CONTAINER_PREFIX}-supervisor-${TASK_FULL_NAME}"
 
-# Remote supervisor mode (skip local supervisor container)
-SKIP_LOCAL_SUPERVISOR="${SKIP_LOCAL_SUPERVISOR:-false}"
-# Default to standalone supervisor on host (use SUPERVISOR=1 for embedded mode)
-SUPERVISOR_URL="${SUPERVISOR_URL:-http://host.docker.internal:8080}"
+# Allocate ports dynamically
+echo "Allocating ports..."
+ALLOCATED_PORTS=($(./scripts/allocate-ports.sh 4 "$WORKSPACE_BASE"))
+if [ ${#ALLOCATED_PORTS[@]} -lt 4 ]; then
+    echo "Error: Failed to allocate ports"
+    exit 1
+fi
 
-# SearXNG integration mode
-# SEARXNG=1 or INCLUDE_SEARXNG=true: start SearXNG with agent (same network)
-# Otherwise: agent uses host.docker.internal:8888 (run 'make searxng-start' first)
+PORT_AGENT_3000="${ALLOCATED_PORTS[0]}"
+PORT_AGENT_5000="${ALLOCATED_PORTS[1]}"
+PORT_AGENT_8000="${ALLOCATED_PORTS[2]}"
+PORT_SUPERVISOR="${ALLOCATED_PORTS[3]}"
+
+# SearXNG integration (external by default)
 INCLUDE_SEARXNG="${INCLUDE_SEARXNG:-${SEARXNG:-false}}"
 if [ "$INCLUDE_SEARXNG" = "1" ]; then
     INCLUDE_SEARXNG="true"
 fi
 
-# Supervisor integration mode
-# SUPERVISOR=1 or INCLUDE_SUPERVISOR=true: start supervisor with agent (same network)
-# Otherwise: agent uses standalone supervisor at host.docker.internal:8080 (run 'make supervisor-start' first)
-INCLUDE_SUPERVISOR="${INCLUDE_SUPERVISOR:-${SUPERVISOR:-false}}"
-if [ "$INCLUDE_SUPERVISOR" = "1" ]; then
-    INCLUDE_SUPERVISOR="true"
-fi
-
-# Supervisor external port - also derived from instance if not set
-if [ -z "$SUPERVISOR_EXTERNAL_PORT" ]; then
-    # Use same hash, different offset range (8080-8119)
-    SUPERVISOR_EXTERNAL_PORT=$((8080 + (INSTANCE_HASH_NUM % 40)))
-fi
-
-# Export SKIP_LOCAL_SUPERVISOR for docker-compose conditional profiles
-export SKIP_LOCAL_SUPERVISOR
-
-# Workspace base directory (default: ./workspaces relative to project)
-WORKSPACE_BASE="${WORKSPACE_BASE:-$SCRIPT_DIR/workspaces}"
-
-# Full workspace path
-WORKSPACE_PATH="$WORKSPACE_BASE/$WORKSPACE_NAME"
-
-# Supervisor workspace path (for turn isolation)
-SUPERVISOR_WORKSPACES="$WORKSPACE_BASE/${WORKSPACE_NAME}-supervisor"
-
-# Task storage path (immutable - mounted read-only to both containers)
-TASK_STORAGE="$WORKSPACE_BASE/${WORKSPACE_NAME}-task"
-
-# Create workspace directories if they don't exist
+# Create task directory structure
+echo "Creating task directory: $TASK_DIR"
 mkdir -p "$WORKSPACE_PATH"
-mkdir -p "$SUPERVISOR_WORKSPACES"
 mkdir -p "$TASK_STORAGE"
+mkdir -p "$SUPERVISOR_WORKSPACES"
 
 # Copy CLAUDE.md template if workspace doesn't have it
-# NOTE: Use claude-backup/CLAUDE.md (autonomous agent instructions)
-#       NOT ./CLAUDE.md (project development instructions)
 if [ ! -f "$WORKSPACE_PATH/CLAUDE.md" ] && [ -f "./claude-backup/CLAUDE.md" ]; then
     cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
-    echo "Initialized workspace '$WORKSPACE_NAME' with CLAUDE.md"
+    echo "Initialized workspace with CLAUDE.md"
 fi
 
-# Write original task to IMMUTABLE task storage (mounted read-only to containers)
+# Write original task to IMMUTABLE task storage
 if [ -n "$ORIGINAL_TASK" ]; then
-    # Write to immutable location (host controls this, containers can only read)
     echo "$ORIGINAL_TASK" > "$TASK_STORAGE/original_task"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$TASK_STORAGE/created_at"
     echo "$ORIGINAL_TASK" | sha256sum | cut -d' ' -f1 > "$TASK_STORAGE/task_hash"
-
-    # Also write a copy to agent workspace for convenience (agent can see the task)
-    # But the AUTHORITATIVE version is in $TASK_STORAGE (read-only mount)
     echo "$ORIGINAL_TASK" > "$WORKSPACE_PATH/.original_task"
 
-    echo "Original task saved to immutable storage"
+    # Create TASK.md for easy agent access
+    echo "$ORIGINAL_TASK" > "$WORKSPACE_PATH/TASK.md"
 fi
 
-# Clean up any stale completion marker from previous runs
-if [ -f "$WORKSPACE_PATH/.supervisor_complete" ]; then
-    echo "Removing stale completion marker from previous run"
-    rm -f "$WORKSPACE_PATH/.supervisor_complete"
-fi
+# Get image info
+AGENT_IMAGE="local-claude-docker-agent:latest"
+AGENT_IMAGE_SHA=$(docker images --no-trunc --format '{{.ID}}' "$AGENT_IMAGE" 2>/dev/null | head -1 || echo "unknown")
+SUPERVISOR_IMAGE_SHA=$(docker images --no-trunc --format '{{.ID}}' "local-claude-docker-supervisor:latest" 2>/dev/null | head -1 || echo "unknown")
 
-# Reset supervisor loop counter for fresh run
-if [ -f "$SUPERVISOR_WORKSPACES/.loop_count" ]; then
-    echo "Resetting supervisor loop counter"
-    rm -f "$SUPERVISOR_WORKSPACES/.loop_count"
-fi
+# Generate metadata.json
+cat > "$METADATA_FILE" << EOF
+{
+  "version": "1.0",
+  "task": {
+    "name": "$WORKSPACE_NAME",
+    "full_name": "$TASK_FULL_NAME",
+    "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "original_task": $(echo "$ORIGINAL_TASK" | jq -Rs .)
+  },
+  "env": {
+    "file": "$ENV_FILE",
+    "llm_host": "${LLM_HOST:-}",
+    "llm_port": ${LLM_PORT:-11234},
+    "llm_model": "${LLM_MODEL:-}"
+  },
+  "containers": {
+    "agent": {
+      "name": "$AGENT_CONTAINER",
+      "image": "$AGENT_IMAGE",
+      "image_sha": "$AGENT_IMAGE_SHA"
+    },
+    "supervisor": {
+      "name": "$SUPERVISOR_CONTAINER",
+      "image": "local-claude-docker-supervisor:latest",
+      "image_sha": "$SUPERVISOR_IMAGE_SHA"
+    }
+  },
+  "ports": {
+    "agent": {
+      "3000": $PORT_AGENT_3000,
+      "5000": $PORT_AGENT_5000,
+      "8000": $PORT_AGENT_8000
+    },
+    "supervisor": {
+      "8080": $PORT_SUPERVISOR
+    }
+  },
+  "paths": {
+    "task_dir": "$TASK_DIR",
+    "worker": "$WORKSPACE_PATH",
+    "task": "$TASK_STORAGE",
+    "supervisor": "$SUPERVISOR_WORKSPACES"
+  },
+  "status": {
+    "state": "starting",
+    "start_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+    "stop_time": null,
+    "exit_code": null
+  }
+}
+EOF
 
-echo "Starting Claude Code with workspace: $WORKSPACE_NAME"
-echo "  Instance: $INSTANCE_NAME"
-echo "  Agent workspace: $WORKSPACE_PATH"
-echo "  Supervisor workspace: $SUPERVISOR_WORKSPACES"
-echo "  Task storage (immutable): $TASK_STORAGE"
-echo "  Ports: ${PORT_PREFIX}3000, ${PORT_PREFIX}5000, ${PORT_PREFIX}8000, ${PORT_PREFIX}8080"
-if [ "$SKIP_LOCAL_SUPERVISOR" = "true" ]; then
-    echo "  Supervisor: REMOTE ($SUPERVISOR_URL)"
-else
-    echo "  Supervisor: LOCAL (port $SUPERVISOR_EXTERNAL_PORT)"
-fi
+echo ""
+echo "=========================================="
+echo "Task: $TASK_FULL_NAME"
+echo "=========================================="
+echo "  Config: $ENV_FILE"
+echo "  LLM: ${LLM_HOST:-localhost}:${LLM_PORT:-11234} (${LLM_MODEL:-default})"
+echo ""
+echo "  Folders:"
+echo "    Worker:     $WORKSPACE_PATH"
+echo "    Task:       $TASK_STORAGE"
+echo "    Supervisor: $SUPERVISOR_WORKSPACES"
+echo "    Metadata:   $METADATA_FILE"
+echo ""
+echo "  Ports:"
+echo "    Agent:      $PORT_AGENT_3000, $PORT_AGENT_5000, $PORT_AGENT_8000"
+echo "    Supervisor: $PORT_SUPERVISOR"
+echo ""
+echo "  Containers:"
+echo "    Agent:      $AGENT_CONTAINER"
+echo "    Supervisor: $SUPERVISOR_CONTAINER"
+echo ""
 if [ "$INCLUDE_SEARXNG" = "true" ]; then
-    echo "  SearXNG: INTEGRATED (same network)"
-    export SEARXNG_URL="http://searxng:8080"
+    echo "  SearXNG: INTEGRATED"
 else
     echo "  SearXNG: EXTERNAL (host.docker.internal:8888)"
-    echo "           Run 'make searxng-start' if not already running"
-fi
-if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
-    echo "  Supervisor: INTEGRATED (same network)"
-    export SUPERVISOR_URL="http://supervisor:8080"
-else
-    echo "  Supervisor: EXTERNAL (host.docker.internal:8080)"
-    echo "              Run 'make supervisor-start' if not already running"
 fi
 if [ -n "$ORIGINAL_TASK" ]; then
+    echo ""
     echo "  Task: ${ORIGINAL_TASK:0:100}..."
 fi
+echo "=========================================="
 echo ""
 
 # Export for docker-compose
 export WORKSPACE_PATH
-export WORKSPACE_NAME
+export WORKSPACE_NAME="$TASK_FULL_NAME"
 export SUPERVISOR_WORKSPACES
 export TASK_STORAGE
 export ORIGINAL_TASK
-export INSTANCE_NAME
-export PORT_PREFIX
-export CONTAINER_PREFIX
-export SUPERVISOR_URL
-export SUPERVISOR_EXTERNAL_PORT
+export AGENT_CONTAINER
+export SUPERVISOR_CONTAINER
+export PORT_AGENT_3000
+export PORT_AGENT_5000
+export PORT_AGENT_8000
+export PORT_SUPERVISOR
+export SUPERVISOR_URL="http://supervisor:8080"
 
-# Docker Compose project name for isolation (allows multiple stacks)
-export COMPOSE_PROJECT_NAME="${CONTAINER_PREFIX}-${INSTANCE_NAME}"
+# Docker Compose project name for isolation
+export COMPOSE_PROJECT_NAME="${CONTAINER_PREFIX}-${TASK_FULL_NAME}"
 
-# Build compose command with optional profiles
+# Update metadata status to running
+jq '.status.state = "running"' "$METADATA_FILE" > "$METADATA_FILE.tmp" && mv "$METADATA_FILE.tmp" "$METADATA_FILE"
+
+# Build compose command (supervisor always included, searxng optional)
 COMPOSE_CMD="docker compose"
 if [ "$INCLUDE_SEARXNG" = "true" ]; then
     COMPOSE_CMD="$COMPOSE_CMD --profile searxng"
 fi
-if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
-    COMPOSE_CMD="$COMPOSE_CMD --profile supervisor"
+
+# Run agent with dedicated supervisor (background mode with auto-attach)
+echo "Starting agent and supervisor in background..."
+$COMPOSE_CMD up -d
+
+# Wait for agent container to be running
+echo "Waiting for agent container..."
+for i in {1..30}; do
+    if docker ps -q --filter "name=$AGENT_CONTAINER" | grep -q .; then
+        break
+    fi
+    sleep 1
+done
+
+if ! docker ps -q --filter "name=$AGENT_CONTAINER" | grep -q .; then
+    echo "ERROR: Agent container failed to start"
+    $COMPOSE_CMD logs
+    exit 1
 fi
 
-# Run agent
-# --service-ports: publish ports defined in docker-compose.yml
-# ORIGINAL_TASK env var is passed to container and used by entrypoint
 echo ""
-if [ "$INCLUDE_SUPERVISOR" = "true" ]; then
-    echo "Running with integrated supervisor..."
-    $COMPOSE_CMD run --rm --service-ports agent
-else
-    echo "Running with standalone supervisor..."
-    $COMPOSE_CMD run --rm --service-ports --no-deps agent
+echo "Containers running. Attaching to agent..."
+echo "  Detach: Ctrl+P, Ctrl+Q (containers keep running)"
+echo "  Re-attach: make attach T=$TASK_FULL_NAME"
+echo "  Stop: make stop T=$TASK_FULL_NAME"
+echo ""
+
+# Attach to agent container (interactive)
+docker attach "$AGENT_CONTAINER"
+EXIT_CODE=$?
+
+# Check if containers are still running (user detached vs exited)
+if docker ps -q --filter "name=$AGENT_CONTAINER" | grep -q .; then
+    echo ""
+    echo "Detached. Containers still running."
+    echo "  Re-attach: make attach T=$TASK_FULL_NAME"
+    echo "  Stop: make stop T=$TASK_FULL_NAME"
+    # Don't update metadata - task is still running
+    exit 0
 fi
+
+# Agent exited - clean up supervisor too
+echo "Agent exited. Stopping supervisor..."
+docker stop "$SUPERVISOR_CONTAINER" 2>/dev/null || true
+
+# Update metadata on exit
+jq --arg stop_time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+   --argjson exit_code "$EXIT_CODE" \
+   '.status.state = "stopped" | .status.stop_time = $stop_time | .status.exit_code = $exit_code' \
+   "$METADATA_FILE" > "$METADATA_FILE.tmp" && mv "$METADATA_FILE.tmp" "$METADATA_FILE"
+
+echo ""
+echo "Task completed. Exit code: $EXIT_CODE"
+echo "Metadata: $METADATA_FILE"
