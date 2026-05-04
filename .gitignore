@@ -25,3 +25,14 @@ vanilla/workspaces/
 *.swo
 *~
 .langfuse/
+
+# Optional local notes / research (keep on your machine; not tracked)
+docs/AGENT_SUPERVISOR_PLAN.md
+docs/AUTO_CONTINUE.md
+docs/CLAW_CODE_EVALUATION.md
+docs/INCIDENT_2026-03-23_stuck_agent.md
+docs/INVESTIGATION_2026-03-24_failed_run.md
+docs/NETWORK_NOTES.md
+docs/SUBAGENT_DELEGATION_RESEARCH.md
+docs/TASK_ISOLATION_PLAN.md
+docs/WEBSEARCH_MIGRATION.md
