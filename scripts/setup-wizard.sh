@@ -322,10 +322,10 @@ if [ "$ENV_FILE" = "$PROJECT_DIR/.env" ]; then
     echo "  1. Review config:     make env"
     echo "  2. Test connection:   make test"
     echo "  3. Build images:      make build"
-    echo "  4. Start an agent:    make run W=myproject T=\"your task\""
+    echo "  4. Start a worker:    make worker W=myworker TASK=\"your task\""
 else
     ENV_NAME=$(basename "$ENV_FILE")
     echo "Next steps:"
-    echo "  1. Start an agent:    make run W=myproject ENV=$ENV_NAME T=\"your task\""
+    echo "  1. Start a worker:    make worker W=myworker ENV=$ENV_NAME TASK=\"your task\""
 fi
 echo ""

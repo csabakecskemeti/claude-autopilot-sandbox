@@ -1,8 +1,15 @@
 # Claude Autopilot Sandbox - Makefile
 # Run 'make help' for available commands
 
-.PHONY: help setup build build-base build-clean run stop stop-all attach logs ps clean shell status prune test env env-clone \
-        tasks task-info task-clean task-remove tasks-clean \
+# Worker id flags (W / w / WORKER) collide with common shell exports; make imports
+# the environment as macros. Empty defaults here so only this file and explicit
+# CLI assignments (make attach W=…) define the worker id.
+W :=
+w :=
+WORKER :=
+
+.PHONY: help setup build build-base build-clean worker stop stop-all attach worker-info logs ps clean shell status prune test env env-clone \
+        workers worker-clean worker-remove workers-clean \
         searxng-start searxng-stop searxng-status searxng-test searxng-logs \
         langfuse-install langfuse-start langfuse-stop langfuse-status langfuse-logs langfuse-clean
 
@@ -22,31 +29,28 @@ help:
 	@echo "  make build          Build Docker images"
 	@echo "  make build-clean    Build Docker images (no cache)"
 	@echo ""
-	@echo "Running:"
-	@echo "  make run W=myproject T=\"Build a todo app\""
-	@echo "                      Start agent with workspace and task"
-	@echo "  make run W=myproject TF=task.txt"
-	@echo "                      Start agent with task from file (for complex prompts)"
-	@echo "  make run W=myproject ENV=.env2"
-	@echo "                      Start agent using alternate env file"
-	@echo "  make run W=myproject"
-	@echo "                      Start agent (interactive, no initial task)"
+	@echo "Workers (agents):"
+	@echo "  make worker W=myworker TASK=\"…\"     (aliases: w=, WORKER=, T=/TASK=, TF=/TASKFILE=)"
+	@echo "  make worker W=myworker TASKFILE=task.txt"
+	@echo "  make worker W=myworker ENV=.env2"
+	@echo "  make worker W=myworker                  (interactive, no initial TASK)"
 	@echo ""
-	@echo "Task Management:"
-	@echo "  make tasks          List all tasks with status"
-	@echo "  make task-info [T=name]  Task metadata; omit T to pick a running task (auto if one)"
-	@echo "  make task-clean T=name"
-	@echo "                      Stop and clean up a task"
-	@echo "  make tasks-clean    Clean all stopped tasks"
+	@echo "Worker management:"
+	@echo "  make workers            List worker runs (folders under workspaces/)"
+	@echo "  make worker-info [W=id] metadata.json; W, w, or WORKER=id; omit to pick running"
+	@echo "                          (put W=… on the same line as make, not only export W)"
+	@echo "  make worker-clean W=id  Stop/remove containers (w= or WORKER=id)"
+	@echo "  make workers-clean      Clean all stopped worker runs"
+	@echo "  make worker-remove W=id Remove worker folder (w= or WORKER=id)"
 	@echo ""
-	@echo "Container Management:"
+	@echo "Container management:"
 	@echo "  make ps             List running containers"
-	@echo "  make status         Show status of all instances"
-	@echo "  make attach [T=name]     Attach to agent; omit T to pick a running task (auto if one)"
+	@echo "  make status         Docker claude-* + recent runs (orphaned = supervisor without agent)"
+	@echo "  make attach [W=id]  Attach (W, w, or WORKER = workername_timestamp; omit to pick)"
 	@echo "  make logs           Follow logs (all containers)"
 	@echo "  make logs C=agent   Follow logs for specific container"
-	@echo "  make stop           List running tasks (choose which to stop)"
-	@echo "  make stop T=name    Stop specific task (agent + supervisor)"
+	@echo "  make stop [W=id]    Stop agent+supervisor; omit W for picker (1 run auto, 2+ menu)"
+	@echo "                      Same W= / w= / WORKER= as attach"
 	@echo "  make stop-all       Stop all Claude containers"
 	@echo ""
 	@echo "Debugging:"
@@ -116,7 +120,7 @@ endif
 	fi
 	@cp .env $(E)
 	@echo "Created $(E) from .env"
-	@echo "Edit $(E), then run: make run W=myproject ENV=$(E)"
+	@echo "Edit $(E), then run: make worker W=myworker ENV=$(E) TASK=\"…\"   (or WORKER= / T=)"
 
 test:
 	@ENV_FILE="$${ENV:-.env}"; \
@@ -139,11 +143,15 @@ test:
 		echo "  OFFLINE - Run 'make searxng-start'"; \
 	fi
 	@echo ""
-	@echo "=== Supervisor ==="
-	@if curl -s --max-time 2 "http://localhost:8080/health" > /dev/null 2>&1; then \
-		echo "  OK - Supervisor running at :8080"; \
+	@echo "=== Supervisor (per-task) ==="
+	@ENV_FILE="$${ENV:-.env}"; \
+	. ./$$ENV_FILE 2>/dev/null || true; \
+	PREFIX="$${CONTAINER_PREFIX:-claude}"; \
+	RUNNING=$$(docker ps -q --filter "name=$$PREFIX-supervisor-" 2>/dev/null | wc -l | tr -d ' '); \
+	if [ "$$RUNNING" -gt 0 ] 2>/dev/null; then \
+		echo "  OK - $$RUNNING supervisor container(s) running (one per active task)"; \
 	else \
-		echo "  OFFLINE - Run 'make supervisor-start'"; \
+		echo "  None running — start with: make worker W=… TASK=… (w=, WORKER=, T=, TASKFILE=/TF=)"; \
 	fi
 	@echo ""
 	@echo "=== Langfuse (Tracing) ==="
@@ -154,115 +162,120 @@ test:
 	fi
 
 # ============================================================================
-# Running
+# Running (worker = one agent + supervisor + disk folder workername_timestamp)
+# ============================================================================
+#
+# Usage: make worker W=myworker TASK="goal"   (aliases: WORKER=, T= or TASK=, TF= or TASKFILE=)
+#    or: make worker W=myworker TASKFILE=path
+#    or: make worker W=myworker ENV=.env2
+#    or: make worker W=myworker SEARXNG=1
+#
+worker:
+	@WL="$(strip $(W))"; [ -n "$$WL" ] || WL="$(strip $(w))"; [ -n "$$WL" ] || WL="$(strip $(WORKER))"; \
+	if [ -z "$$WL" ]; then \
+		echo "Error: worker name required (short label → folder <label>_timestamp)."; \
+		echo "Usage: make worker W=myworker TASK=\"…\"   (aliases: w=, WORKER=, T= or TASK=)"; \
+		echo "   or: make worker W=myworker TASKFILE=…   (alias: TF=)"; \
+		echo "   or: make worker W=myworker ENV=.env2"; \
+		echo "   or: make worker W=myworker SEARXNG=1"; \
+		exit 1; \
+	fi; \
+	TFILE="$(strip $(TASKFILE))"; [ -n "$$TFILE" ] || TFILE="$(strip $(TF))"; \
+	E="$(strip $(ENV))"; [ -n "$$E" ] || E=".env"; export ENV="$$E"; \
+	if [ -n "$$TFILE" ]; then \
+		INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "TF=$$TFILE"; \
+	else \
+		TT="$(strip $(TASK))"; [ -n "$$TT" ] || TT="$(strip $(T))"; \
+		INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "$$TT"; \
+	fi
+
+# ============================================================================
+# Worker management
 # ============================================================================
 
-# Usage: make run W=workspace T="task description"
-#    or: make run W=workspace TF=task.txt  (read task from file)
-#    or: make run W=workspace ENV=.env2    (use alternate env file)
-#    or: make run W=workspace SEARXNG=1    (include SearXNG in same network)
-run:
-ifndef W
-	@echo "Error: Workspace required."
-	@echo "Usage: make run W=myproject T=\"task\""
-	@echo "   or: make run W=myproject TF=task.txt"
-	@echo "   or: make run W=myproject ENV=.env2"
-	@echo "   or: make run W=myproject SEARXNG=1  (include SearXNG)"
-	@exit 1
-endif
-ifdef TF
-	ENV=$(or $(ENV),.env) INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$(W)" "TF=$(TF)"
-else
-	ENV=$(or $(ENV),.env) INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$(W)" "$(T)"
-endif
-
-# ============================================================================
-# Task Management
-# ============================================================================
-
-# List all tasks with status
-tasks:
-	@echo "=== Tasks ==="
+# List worker runs (folders under workspaces/)
+workers:
+	@echo "=== Workers ==="
 	@if [ -f .env ]; then . ./.env; fi; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
 	if [ -d "$$WSBASE" ]; then \
 		for meta in "$$WSBASE"/*/metadata.json; do \
 			if [ -f "$$meta" ]; then \
-				jq -r '"  \(.task.full_name): \(.status.state) [\(.env.llm_model // "unknown")]"' "$$meta" 2>/dev/null || true; \
+				"$(CURDIR)/scripts/worker-list-line.sh" "$$meta" 2>/dev/null || true; \
 			fi; \
 		done | head -20; \
 		COUNT=$$(ls -1d "$$WSBASE"/*/ 2>/dev/null | wc -l | tr -d ' '); \
 		echo ""; \
-		echo "Total: $$COUNT task(s)"; \
+		echo "Total: $$COUNT worker run(s) (id = name_timestamp; use W=, w=, or WORKER= with attach/stop/info)"; \
 	else \
-		echo "No tasks found"; \
+		echo "No workspaces found"; \
 	fi
 
-# Show detailed info for a task
-task-info:
-ifneq ($(strip $(T)),)
+# Show metadata for one worker run (W, w, or WORKER = full id — portable; no GNU $(or))
+worker-info:
 	@if [ -f .env ]; then . ./.env; fi; \
-	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	META="$$WSBASE/$(T)/metadata.json"; \
-	if [ -f "$$META" ]; then \
-		echo "=== Task: $(T) ==="; \
-		echo ""; \
-		jq '.' "$$META"; \
+	WID="$(strip $(W))"; [ -n "$$WID" ] || WID="$(strip $(w))"; [ -n "$$WID" ] || WID="$(strip $(WORKER))"; \
+	if [ -n "$$WID" ]; then \
+		WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
+		META="$$WSBASE/$$WID/metadata.json"; \
+		if [ -f "$$META" ]; then \
+			echo "=== Worker: $$WID ==="; \
+			echo ""; \
+			jq '.' "$$META"; \
+		else \
+			echo "Worker not found: $$WID"; \
+			echo "Use 'make workers' to list runs"; \
+			exit 1; \
+		fi; \
 	else \
-		echo "Task not found: $(T)"; \
-		echo "Use 'make tasks' to list available tasks"; \
+		W_PICKED=$$($(CURDIR)/scripts/pick-running-worker.sh) || exit 1; \
+		[ -n "$$W_PICKED" ] || exit 1; \
+		$(MAKE) worker-info W="$$W_PICKED"; \
+	fi
+
+# Stop and remove containers for a worker run (W, w, or WORKER = full id)
+worker-clean:
+	@ID="$(strip $(W))"; [ -n "$$ID" ] || ID="$(strip $(w))"; [ -n "$$ID" ] || ID="$(strip $(WORKER))"; \
+	if [ -z "$$ID" ]; then \
+		echo "Usage: make worker-clean W=workername_20260502_223000   (or WORKER=…)"; \
 		exit 1; \
-	fi
-else
-	@T_PICKED=$$($(CURDIR)/scripts/pick-running-task.sh) || exit 1; \
-	[ -n "$$T_PICKED" ] || exit 1; \
-	$(MAKE) task-info T="$$T_PICKED"
-endif
-
-# Stop and clean up a task
-task-clean:
-ifndef T
-	@echo "Usage: make task-clean T=task_name_20260502_223000"
-	@exit 1
-endif
-	@if [ -f .env ]; then . ./.env; fi; \
+	fi; \
+	if [ -f .env ]; then . ./.env; fi; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	TASK_DIR="$$WSBASE/$(T)"; \
+	TASK_DIR="$$WSBASE/$$ID"; \
 	META="$$TASK_DIR/metadata.json"; \
 	if [ ! -d "$$TASK_DIR" ]; then \
-		echo "Task not found: $(T)"; \
+		echo "Worker not found: $$ID"; \
 		exit 1; \
 	fi; \
-	echo "Cleaning task: $(T)"; \
+	echo "Cleaning worker: $$ID"; \
+	"$(CURDIR)/scripts/stop-worker-containers.sh" --rm "$$ID"; \
 	if [ -f "$$META" ]; then \
-		AGENT=$$(jq -r '.containers.agent.name // empty' "$$META"); \
-		SUPERVISOR=$$(jq -r '.containers.supervisor.name // empty' "$$META"); \
-		if [ -n "$$AGENT" ]; then docker stop "$$AGENT" 2>/dev/null || true; docker rm "$$AGENT" 2>/dev/null || true; fi; \
-		if [ -n "$$SUPERVISOR" ]; then docker stop "$$SUPERVISOR" 2>/dev/null || true; docker rm "$$SUPERVISOR" 2>/dev/null || true; fi; \
 		jq '.status.state = "cleaned"' "$$META" > "$$META.tmp" && mv "$$META.tmp" "$$META"; \
 	fi; \
-	echo "Task cleaned: $(T)"
+	echo "Worker cleaned: $$ID"
 
-# Remove task folder completely
-task-remove:
-ifndef T
-	@echo "Usage: make task-remove T=task_name_20260502_223000"
-	@exit 1
-endif
-	@if [ -f .env ]; then . ./.env; fi; \
-	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	TASK_DIR="$$WSBASE/$(T)"; \
-	if [ ! -d "$$TASK_DIR" ]; then \
-		echo "Task not found: $(T)"; \
+# Remove worker folder completely (W, w, or WORKER = full id)
+worker-remove:
+	@ID="$(strip $(W))"; [ -n "$$ID" ] || ID="$(strip $(w))"; [ -n "$$ID" ] || ID="$(strip $(WORKER))"; \
+	if [ -z "$$ID" ]; then \
+		echo "Usage: make worker-remove W=workername_20260502_223000   (or WORKER=…)"; \
 		exit 1; \
 	fi; \
-	echo "Removing task: $(T)"; \
+	if [ -f .env ]; then . ./.env; fi; \
+	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
+	TASK_DIR="$$WSBASE/$$ID"; \
+	if [ ! -d "$$TASK_DIR" ]; then \
+		echo "Worker not found: $$ID"; \
+		exit 1; \
+	fi; \
+	echo "Removing worker folder: $$ID"; \
 	rm -rf "$$TASK_DIR"; \
-	echo "Task removed"
+	echo "Removed"
 
-# Clean all stopped tasks
-tasks-clean:
-	@echo "Cleaning stopped tasks..."
+# Clean all stopped worker runs
+workers-clean:
+	@echo "Cleaning stopped worker runs..."
 	@if [ -f .env ]; then . ./.env; fi; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
 	COUNT=0; \
@@ -283,7 +296,7 @@ tasks-clean:
 		fi; \
 	done; \
 	echo ""; \
-	echo "Cleaned $$COUNT task(s)"
+	echo "Cleaned $$COUNT worker run(s)"
 
 # ============================================================================
 # Container Management
@@ -296,17 +309,17 @@ status:
 	@echo "=== Running Containers ==="
 	@docker ps --filter "name=claude-" --format "table {{.Names}}\t{{.Status}}\t{{.RunningFor}}"
 	@echo ""
-	@echo "=== Recent Tasks ==="
+	@echo "=== Recent worker runs ==="
 	@if [ -f .env ]; then . ./.env; fi; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
 	if [ -d "$$WSBASE" ]; then \
 		for meta in "$$WSBASE"/*/metadata.json; do \
 			if [ -f "$$meta" ]; then \
-				jq -r '"  \(.task.full_name): \(.status.state)"' "$$meta" 2>/dev/null || true; \
+				"$(CURDIR)/scripts/worker-list-line.sh" "$$meta" 2>/dev/null || true; \
 			fi; \
 		done | tail -10; \
 	else \
-		echo "  No tasks found"; \
+		echo "  No workspaces found"; \
 	fi
 
 logs:
@@ -317,51 +330,33 @@ else
 endif
 
 stop:
-ifdef T
-	@echo "Stopping task: $(T)"
 	@if [ -f .env ]; then . ./.env; fi; \
+	WID="$(strip $(W))"; [ -n "$$WID" ] || WID="$(strip $(w))"; [ -n "$$WID" ] || WID="$(strip $(WORKER))"; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	META="$$WSBASE/$(T)/metadata.json"; \
-	if [ -f "$$META" ]; then \
-		AGENT=$$(jq -r '.containers.agent.name // empty' "$$META"); \
-		SUPERVISOR=$$(jq -r '.containers.supervisor.name // empty' "$$META"); \
-		if [ -n "$$AGENT" ]; then echo "  Stopping agent: $$AGENT"; docker stop "$$AGENT" 2>/dev/null || true; fi; \
-		if [ -n "$$SUPERVISOR" ]; then echo "  Stopping supervisor: $$SUPERVISOR"; docker stop "$$SUPERVISOR" 2>/dev/null || true; fi; \
-		echo "Task stopped: $(T)"; \
-	else \
-		echo "Task not found: $(T)"; \
-		echo "Use 'make tasks' to list available tasks"; \
-	fi
-else
-	@if [ -f .env ]; then . ./.env; fi; \
-	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	CONTAINERS=$$(docker ps --filter "name=claude-agent-" --format "{{.Names}}" 2>/dev/null); \
-	if [ -z "$$CONTAINERS" ]; then \
-		echo "No running worker containers found."; \
-	else \
-		echo "=== Running Worker Containers ==="; \
-		echo ""; \
-		NUM=1; \
-		for container in $$CONTAINERS; do \
-			TASK_NAME=$$(echo "$$container" | sed 's/^claude-agent-//'); \
-			UPTIME=$$(docker ps --filter "name=$$container" --format "{{.Status}}" 2>/dev/null); \
-			echo "  $$NUM) $$TASK_NAME"; \
-			echo "     Container: $$container"; \
-			echo "     Status: $$UPTIME"; \
-			if [ -f "$$WSBASE/$$TASK_NAME/metadata.json" ]; then \
-				MODEL=$$(jq -r '.env.llm_model // "unknown"' "$$WSBASE/$$TASK_NAME/metadata.json" 2>/dev/null); \
-				echo "     Model: $$MODEL"; \
+	if [ -n "$$WID" ]; then \
+		echo "Stopping worker: $$WID"; \
+		META="$$WSBASE/$$WID/metadata.json"; \
+		"$(CURDIR)/scripts/stop-worker-containers.sh" "$$WID"; \
+		if [ -f "$$META" ]; then \
+			STOP_TS=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
+			if jq --arg stop_time "$$STOP_TS" \
+				'.status.state = "stopped" | .status.stop_time = $$stop_time | .status.exit_code = null' \
+				"$$META" > "$$META.tmp" 2>/dev/null && mv "$$META.tmp" "$$META" 2>/dev/null; then \
+				:; \
+			else \
+				rm -f "$$META.tmp" 2>/dev/null || true; \
+				echo "  Warning: could not update metadata (jq or JSON)" >&2; \
 			fi; \
-			echo ""; \
-			NUM=$$((NUM + 1)); \
-		done; \
-		echo "To stop a task, run:"; \
-		echo "  make stop T=<task_name>"; \
-		echo ""; \
-		echo "To stop ALL tasks:"; \
-		echo "  make stop-all"; \
+			echo "Worker stopped: $$WID"; \
+		else \
+			echo "No metadata at $$META — containers were stopped if names matched (see script fallbacks)."; \
+			echo "Use 'make workers' to list runs"; \
+		fi; \
+	else \
+		W_PICKED=$$($(CURDIR)/scripts/pick-running-worker.sh) || exit 1; \
+		[ -n "$$W_PICKED" ] || exit 1; \
+		$(MAKE) stop W="$$W_PICKED"; \
 	fi
-endif
 
 # Stop all Claude containers (force)
 stop-all:
@@ -369,28 +364,29 @@ stop-all:
 	@docker ps -q --filter "name=claude-" | xargs -r docker stop
 	@echo "All containers stopped."
 
-# Attach to a running agent container
+# Attach to a running agent (W, w, or WORKER = full worker id workername_timestamp)
 attach:
-ifneq ($(strip $(T)),)
 	@if [ -f .env ]; then . ./.env; fi; \
+	WID="$(strip $(W))"; [ -n "$$WID" ] || WID="$(strip $(w))"; [ -n "$$WID" ] || WID="$(strip $(WORKER))"; \
 	WSBASE="$${WORKSPACE_BASE:-./workspaces}"; \
-	META="$$WSBASE/$(T)/metadata.json"; \
-	if [ -f "$$META" ]; then \
-		AGENT=$$(jq -r '.containers.agent.name // empty' "$$META"); \
-		if [ -n "$$AGENT" ] && docker ps -q --filter "name=$$AGENT" | grep -q .; then \
-			echo "Attaching to $$AGENT (Ctrl+P, Ctrl+Q to detach)..."; \
-			docker attach "$$AGENT"; \
+	if [ -n "$$WID" ]; then \
+		META="$$WSBASE/$$WID/metadata.json"; \
+		if [ -f "$$META" ]; then \
+			AGENT=$$(jq -r '.containers.agent.name // empty' "$$META"); \
+			if [ -n "$$AGENT" ] && docker ps -q --filter "name=$$AGENT" | grep -q .; then \
+				echo "Attaching to $$AGENT (Ctrl+P, Ctrl+Q to detach)..."; \
+				docker attach "$$AGENT"; \
+			else \
+				echo "Agent container not running: $$AGENT"; \
+			fi; \
 		else \
-			echo "Agent container not running: $$AGENT"; \
+			echo "Worker not found: $$WID"; \
 		fi; \
 	else \
-		echo "Task not found: $(T)"; \
+		W_PICKED=$$($(CURDIR)/scripts/pick-running-worker.sh) || exit 1; \
+		[ -n "$$W_PICKED" ] || exit 1; \
+		$(MAKE) attach W="$$W_PICKED"; \
 	fi
-else
-	@T_PICKED=$$($(CURDIR)/scripts/pick-running-task.sh) || exit 1; \
-	[ -n "$$T_PICKED" ] || exit 1; \
-	$(MAKE) attach T="$$T_PICKED"
-endif
 
 # ============================================================================
 # Debugging

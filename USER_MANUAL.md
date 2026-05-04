@@ -22,7 +22,7 @@ make setup
 make build
 
 # 3. Run with a task
-make run W=myproject T="Build a todo app with Flask"
+make worker W=myproject TASK="Build a todo app with Flask"
 ```
 
 ## Running Agents
@@ -30,7 +30,8 @@ make run W=myproject T="Build a todo app with Flask"
 ### Simple Task
 
 ```bash
-make run W=myproject T="Build a todo app"
+make worker W=myproject TASK="Build a todo app"
+# same: WORKER=myproject T="Build a todo app"
 ```
 
 ### Complex Task (from file)
@@ -45,13 +46,13 @@ Build a "Universal" To-Do Engine with:
 - AI-powered task decomposition
 EOF
 
-make run W=myproject TF=task.txt
+make worker W=myproject TASKFILE=task.txt
 ```
 
 ### Interactive Mode
 
 ```bash
-make run W=myproject
+make worker W=myproject
 ```
 
 ## Multi-Instance Support
@@ -60,19 +61,19 @@ Run multiple agents simultaneously:
 
 ```bash
 # Terminal 1
-make run W=project1 T="Build a todo app"
-# → Instance: agent-a1b2c3d4, Ports: 23000, 25000...
+make worker W=project1 TASK="Build a todo app"
+# → Worker run id under workspaces/; host ports from allocate-ports (see metadata.json)
 
 # Terminal 2
-make run W=project2 T="Build a chat app"
-# → Instance: agent-e5f67890, Ports: 43000, 45000...
+make worker W=project2 TASK="Build a chat app"
+# → Second worker run: own folder, ports from allocate-ports, own compose project
 ```
 
-Each instance gets:
-- Unique container names
-- Auto-generated port prefix (2-5)
-- Isolated network
-- Separate workspace
+Each worker run gets:
+- Unique container names (`<prefix>-agent-<worker_run_id>`, same for supervisor)
+- Four host ports from `scripts/allocate-ports.sh` (see `metadata.json`)
+- Isolated Docker network per Compose project
+- Folder `workspaces/<worker_run_id>/` with `worker/`, `task/`, `supervisor/`
 
 ### Accessing Web Apps
 
@@ -92,7 +93,7 @@ make ps             # List running containers
 make status         # Show instances and workspaces
 make logs           # Follow all logs
 make logs C=agent   # Follow specific container
-make stop           # Stop all containers
+make stop           # Pick worker to stop (or make stop W=id); make stop-all for all
 make shell          # Shell into agent container
 ```
 
@@ -188,7 +189,7 @@ SUPERVISOR_MAX_LOOPS=30
 ### Port Conflicts
 Explicitly set port prefix:
 ```bash
-PORT_PREFIX=4 make run W=myproject T="task"
+make worker W=myproject TASK="task"
 ```
 
 ### Build Issues

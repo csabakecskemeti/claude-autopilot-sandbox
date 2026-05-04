@@ -7,12 +7,12 @@
 #   ./run.sh myproject                         # Interactive (no task)
 #   ENV=.env-dgx2 ./run.sh myproject "task"   # With specific env file
 #
-# Each task creates an isolated folder structure:
-#   $WORKSPACE_BASE/{name}_{timestamp}/
+# Each `make worker W=<label>` creates an isolated folder (worker run id = <label>_<timestamp>):
+#   $WORKSPACE_BASE/{label}_{timestamp}/
 #   ├── worker/       # Agent workspace
 #   ├── task/         # Immutable task storage
 #   ├── supervisor/   # Supervisor workspace (visible from host)
-#   └── metadata.json # Task configuration and status
+#   └── metadata.json # Run configuration and status
 #
 # Architecture:
 #   - Agent container: Runs Claude Code with full filesystem access
@@ -250,8 +250,8 @@ fi
 echo ""
 echo "Containers running. Attaching to agent..."
 echo "  Detach: Ctrl+P, Ctrl+Q (containers keep running)"
-echo "  Re-attach: make attach T=$TASK_FULL_NAME"
-echo "  Stop: make stop T=$TASK_FULL_NAME"
+echo "  Re-attach: make attach W=$TASK_FULL_NAME   (or w= / WORKER=)"
+echo "  Stop: make stop W=$TASK_FULL_NAME   (or w= / WORKER=)"
 echo ""
 
 # Attach to agent container (interactive)
@@ -262,8 +262,8 @@ EXIT_CODE=$?
 if docker ps -q --filter "name=$AGENT_CONTAINER" | grep -q .; then
     echo ""
     echo "Detached. Containers still running."
-    echo "  Re-attach: make attach T=$TASK_FULL_NAME"
-    echo "  Stop: make stop T=$TASK_FULL_NAME"
+    echo "  Re-attach: make attach W=$TASK_FULL_NAME   (or w= / WORKER=)"
+    echo "  Stop: make stop W=$TASK_FULL_NAME   (or w= / WORKER=)"
     # Don't update metadata - task is still running
     exit 0
 fi

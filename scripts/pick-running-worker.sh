@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Print one task full_name (directory name under workspaces/) for a running agent.
+# Print one worker instance id (folder name under workspaces/) for a running agent.
 # - 0 running agents: message on stderr, exit 1
-# - 1 running agent: print task name on stdout, exit 0
-# - 2+: menu on stderr, read choice from tty, print selected task on stdout
+# - 1 running agent: print id on stdout, exit 0
+# - 2+: menu on stderr, read choice from tty, print selected id on stdout
 #
-# Used by Makefile when attach/task-info are invoked without T=.
+# Used by Makefile when attach, worker-info, or stop is invoked without W=.
 
 set -euo pipefail
 
@@ -32,28 +32,28 @@ done < <(docker ps --filter "name=${AGENT_PREFIX}" --format '{{.Names}}' 2>/dev/
 n="${#containers[@]}"
 if [ "$n" -eq 0 ]; then
   echo "No running worker containers found." >&2
-  echo "Start a task with: make run W=myproject T=\"...\"" >&2
+  echo "Start one with: make worker W=myworker TASK=\"…\" (w=, WORKER=, T=, TASKFILE=/TF=)" >&2
   exit 1
 fi
 
-task_from_container() {
+id_from_container() {
   local c="$1"
   echo "${c#"${AGENT_PREFIX}"}"
 }
 
 if [ "$n" -eq 1 ]; then
-  task_from_container "${containers[0]}"
+  id_from_container "${containers[0]}"
   exit 0
 fi
 
-echo "=== Running tasks ===" >&2
+echo "=== Running workers ===" >&2
 i=1
 for c in "${containers[@]}"; do
-  t="$(task_from_container "$c")"
-  printf '  %d) %s\n' "$i" "$t" >&2
+  wid="$(id_from_container "$c")"
+  printf '  %d) %s\n' "$i" "$wid" >&2
   i=$((i + 1))
 done
-printf 'Select task [1-%d]: ' "$n" >&2
+printf 'Select worker [1-%d]: ' "$n" >&2
 choice=""
 if [ -r /dev/tty ]; then
   read -r choice </dev/tty || true
@@ -69,4 +69,4 @@ if [ "$choice" -lt 1 ] || [ "$choice" -gt "$n" ]; then
   exit 1
 fi
 idx=$((choice - 1))
-task_from_container "${containers[$idx]}"
+id_from_container "${containers[$idx]}"

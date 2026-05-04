@@ -2,6 +2,13 @@
 
 All notable changes to Claude Autopilot Sandbox will be documented in this file.
 
+## [Unreleased]
+
+### Changed (Makefile CLI)
+- **`make worker`** with **`W=`** (label), **`TASK=`**, **`TASKFILE=`**; lifecycle uses **`W=<full_worker_run_id>`** for **`worker-info`**, **`attach`**, **`stop`**, **`worker-clean`**, **`worker-remove`**.
+- **`make workers`** / **`workers-clean`**; **`scripts/pick-running-worker.sh`** when `W=` is omitted on **`attach`**, **`worker-info`**, and **`stop`** (one runner auto-selected; menu if several).
+- Removed: **`make run`**, **`task-*`** targets. **Synonyms on Make:** **`W=`** / **`w=`** / **`WORKER=`**, **`T=`** / **`TASK=`**, **`TF=`** / **`TASKFILE=`** (start); **`W=`** / **`w=`** / **`WORKER=`** for full run id on lifecycle targets. **BSD make:** `stop` / `attach` / `worker-info` use shell (no GNU **`$(or …)`**).
+
 ## [1.1.0] - 2026-03-25
 
 ### Added

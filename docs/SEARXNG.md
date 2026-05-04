@@ -98,7 +98,7 @@ Run SearXNG separately, agent connects via host network:
 make searxng-start
 
 # Run agent (connects via host.docker.internal:8888)
-make run W=myproject T="task"
+make worker W=myproject TASK="task"
 ```
 
 Best for: Running multiple agents, persistent search service.
@@ -109,7 +109,7 @@ Start SearXNG with the agent in the same Docker network:
 
 ```bash
 # Run agent with SearXNG included
-make run W=myproject T="task" SEARXNG=1
+make worker W=myproject TASK="task" SEARXNG=1
 ```
 
 Best for: Single-run tasks, simpler setup, Linux hosts.
