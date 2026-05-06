@@ -79,6 +79,7 @@ fi
 # NOTE: MCP servers go in ~/.claude.json (handled separately below)
 # NOTE: One Stop hook only — langfuse_stop_hook.sh runs Langfuse then supervisor in order.
 #       Claude Code runs multiple Stop commands in PARALLEL; split hooks would not guarantee order.
+# NOTE: PreToolUse hook blocks image reads to prevent multimodal errors with local LLMs.
 cat > "${CLAUDE_DIR}/settings.json" << EOF
 {
   "permissions": {
@@ -86,6 +87,18 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOME}/.claude/hooks/block_image_read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -128,10 +141,12 @@ fi
 # Ensure the hooks state directory exists
 mkdir -p "${HOME}/.claude/state"
 
-# Verify hook script is executable
+# Verify hook scripts are executable
 chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
+chmod +x "${HOME}/.claude/hooks/block_image_read.sh" 2>/dev/null || true
 
 echo "Workspace initialization complete"
+echo "PreToolUse hook: ${HOME}/.claude/hooks/block_image_read.sh (blocks image reads)"
 echo "Stop hook: ${HOME}/.claude/hooks/langfuse_stop_hook.sh (Langfuse then supervisor)"
 echo "Settings: ${CLAUDE_DIR}/settings.json"
 
