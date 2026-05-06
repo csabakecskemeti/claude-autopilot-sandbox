@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import logging
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, jsonify, request
@@ -32,11 +33,15 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configuration - using SUPERVISOR_ prefix for clarity
-WORKSPACE = os.environ.get("WORKSPACE_PATH", "/workspace")
+# For shared supervisor mode, these are base paths; actual paths come from request
+WORKSPACES_BASE = os.environ.get("WORKSPACES_BASE", "/workspaces")  # Base for all agent workspaces
 SUPERVISOR_WORKSPACES = os.environ.get("SUPERVISOR_WORKSPACES", "/supervisor-workspaces")
-TASK_STORAGE = os.environ.get("TASK_STORAGE", "/task")  # Immutable task storage (read-only mount)
 MAX_LOOPS = int(os.environ.get("SUPERVISOR_MAX_LOOPS", "20"))
 TIMEOUT = int(os.environ.get("SUPERVISOR_TIMEOUT", "3600"))  # 1 hour default for complex tasks
+
+# Legacy single-workspace mode (backwards compatibility)
+WORKSPACE = os.environ.get("WORKSPACE_PATH", "/workspace")
+TASK_STORAGE = os.environ.get("TASK_STORAGE", "/task")
 
 # LLM config (supervisor uses same backend as agent)
 LLM_MODEL = os.environ.get("LLM_MODEL", "")
@@ -59,16 +64,16 @@ def load_prompt_template() -> str:
 {original_task}
 ---
 
-Evaluate if this task is complete. Check /workspace for the agent's code.
+Evaluate if this task is complete. Check {workspace_path} for the agent's code.
 
 If the task is COMPLETE, say "status: complete" in your response.
 If the task is NOT COMPLETE, say "status: not_complete" and explain what needs to be done.
 '''
 
 
-def get_loop_count() -> int:
+def get_loop_count(suffix: str = "") -> int:
     """Get current loop count from supervisor workspace"""
-    counter_file = Path(SUPERVISOR_WORKSPACES) / ".loop_count"
+    counter_file = Path(SUPERVISOR_WORKSPACES) / f".loop_count{suffix}"
     if counter_file.exists():
         try:
             return int(counter_file.read_text().strip())
@@ -77,55 +82,126 @@ def get_loop_count() -> int:
     return 0
 
 
-def increment_loop_count() -> int:
+def increment_loop_count(suffix: str = "") -> int:
     """Increment and return new loop count"""
-    counter_file = Path(SUPERVISOR_WORKSPACES) / ".loop_count"
-    current = get_loop_count()
+    counter_file = Path(SUPERVISOR_WORKSPACES) / f".loop_count{suffix}"
+    current = get_loop_count(suffix)
     new_count = current + 1
     counter_file.write_text(str(new_count))
     return new_count
 
 
-def reset_loop_count():
+def reset_loop_count(suffix: str = ""):
     """Reset loop count (called when task is complete)"""
-    counter_file = Path(SUPERVISOR_WORKSPACES) / ".loop_count"
+    counter_file = Path(SUPERVISOR_WORKSPACES) / f".loop_count{suffix}"
     if counter_file.exists():
         counter_file.unlink()
 
 
-def read_original_task() -> str:
+def get_history_file(instance_id: str) -> Path:
+    """Get path to evaluation history file for an instance"""
+    return Path(SUPERVISOR_WORKSPACES) / f".history_{instance_id}.jsonl"
+
+
+def save_evaluation(instance_id: str, loop: int, status: str, output: str, workspace: str = None):
+    """Save evaluation result to instance history (JSONL format)"""
+    history_file = get_history_file(instance_id)
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "instance": instance_id,
+        "loop": loop,
+        "status": status,
+        "workspace": workspace,
+        "output_preview": output[:500] if output else "",
+        "output_length": len(output) if output else 0
+    }
+    with open(history_file, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    log.info(f"Saved evaluation to history: {instance_id} loop={loop} status={status}")
+
+
+def get_evaluation_history(instance_id: str) -> list:
+    """Get evaluation history for an instance"""
+    history_file = get_history_file(instance_id)
+    if not history_file.exists():
+        return []
+
+    history = []
+    with open(history_file, "r") as f:
+        for line in f:
+            try:
+                history.append(json.loads(line.strip()))
+            except json.JSONDecodeError:
+                continue
+    return history
+
+
+def list_instances() -> list:
+    """List all known instance IDs from history files"""
+    instances = []
+    supervisor_dir = Path(SUPERVISOR_WORKSPACES)
+    if not supervisor_dir.exists():
+        return instances
+
+    for f in supervisor_dir.glob(".history_*.jsonl"):
+        instance_id = f.stem.replace(".history_", "")
+        history = get_evaluation_history(instance_id)
+        loop_count = get_loop_count(f"_{instance_id}" if instance_id != "default" else "")
+        instances.append({
+            "instance_id": instance_id,
+            "evaluations": len(history),
+            "current_loop": loop_count,
+            "last_status": history[-1]["status"] if history else None,
+            "last_evaluation": history[-1]["timestamp"] if history else None
+        })
+    return instances
+
+
+def read_original_task(workspace_path: str = None, task_path: str = None) -> str:
     """
     Read original task from IMMUTABLE task storage.
+
+    Args:
+        workspace_path: Path to agent workspace (for shared supervisor mode)
+        task_path: Path to task storage (for shared supervisor mode)
 
     The task storage is a host folder mounted read-only to both containers.
     Neither agent nor supervisor can modify it - Docker enforces this at kernel level.
     """
+    # Use provided paths or fall back to legacy environment variables
+    task_storage = task_path or TASK_STORAGE
+    workspace = workspace_path or WORKSPACE
+
     # Primary: Read from immutable task storage (host-controlled, read-only mount)
-    immutable_task = Path(TASK_STORAGE) / "original_task"
+    immutable_task = Path(task_storage) / "original_task"
     if immutable_task.exists():
-        log.info("Reading task from immutable storage (tamper-proof)")
+        log.info(f"Reading task from immutable storage: {immutable_task}")
         return immutable_task.read_text().strip()
 
     # Fallback: Read from agent workspace (less secure, for backwards compatibility)
     log.warning("Immutable task storage not found, falling back to agent workspace")
 
-    task_file = Path(WORKSPACE) / ".original_task"
+    task_file = Path(workspace) / ".original_task"
     if task_file.exists():
         return task_file.read_text().strip()
 
     # Last resort: try TASK.md or similar
     for fallback in ["TASK.md", "task.md", "README.md"]:
-        fb_path = Path(WORKSPACE) / fallback
+        fb_path = Path(workspace) / fallback
         if fb_path.exists():
             content = fb_path.read_text()
             return content[:500] + ("..." if len(content) > 500 else "")
 
-    return "Unknown task - no task file found in /task or /workspace"
+    return "Unknown task - no task file found in task storage or workspace"
 
 
-def prepare_turn_workspace(turn: int) -> Path:
+def prepare_turn_workspace(turn: int, instance_id: str = "default") -> Path:
     """Create isolated workspace for this evaluation turn"""
-    turn_dir = Path(SUPERVISOR_WORKSPACES) / f"TURN{turn}"
+    # Include instance_id in path for multi-agent isolation
+    if instance_id != "default":
+        turn_dir = Path(SUPERVISOR_WORKSPACES) / instance_id / f"TURN{turn}"
+    else:
+        turn_dir = Path(SUPERVISOR_WORKSPACES) / f"TURN{turn}"
     turn_dir.mkdir(parents=True, exist_ok=True)
 
     # Create .claude directory for this turn
@@ -140,10 +216,10 @@ def prepare_turn_workspace(turn: int) -> Path:
     return turn_dir
 
 
-def build_prompt(original_task: str) -> str:
+def build_prompt(original_task: str, workspace_path: str = "/workspace") -> str:
     """Build the supervisor evaluation prompt"""
     template = load_prompt_template()
-    return template.format(original_task=original_task)
+    return template.format(original_task=original_task, workspace_path=workspace_path)
 
 
 def determine_status(output: str) -> str:
@@ -240,6 +316,11 @@ def evaluate():
     Main evaluation endpoint.
     Called by stop hook to verify task completion.
 
+    Query/Body params (for shared supervisor mode):
+        workspace: Name of workspace (e.g., "myproject") - resolved to /workspaces/<name>
+        task: Name of task storage (e.g., "myproject-task") - resolved to /workspaces/<name>
+        instance: Instance identifier for loop counting (optional)
+
     Returns:
         {
             "status": "complete" | "not_complete",
@@ -249,29 +330,54 @@ def evaluate():
     log.info("=" * 50)
     log.info("Evaluation requested")
 
-    # Increment loop count
-    loop_count = increment_loop_count()
-    log.info(f"Evaluation loop: {loop_count} / {MAX_LOOPS}")
+    # Get workspace info from request (for shared supervisor mode)
+    if request.method == "POST" and request.is_json:
+        data = request.get_json()
+        workspace_name = data.get("workspace")
+        task_name = data.get("task")
+        instance_id = data.get("instance", "default")
+    else:
+        workspace_name = request.args.get("workspace")
+        task_name = request.args.get("task")
+        instance_id = request.args.get("instance", "default")
+
+    # Resolve paths
+    if workspace_name:
+        workspace_path = f"{WORKSPACES_BASE}/{workspace_name}"
+        task_path = f"{WORKSPACES_BASE}/{task_name}" if task_name else None
+        log.info(f"Shared mode - workspace: {workspace_name}, task: {task_name}, instance: {instance_id}")
+    else:
+        workspace_path = WORKSPACE
+        task_path = TASK_STORAGE
+        instance_id = "default"
+        log.info("Legacy mode - using environment paths")
+
+    # Use instance-specific loop counter for shared mode
+    loop_file_suffix = f"_{instance_id}" if instance_id != "default" else ""
+
+    # Increment loop count (instance-specific)
+    loop_count = increment_loop_count(loop_file_suffix)
+    log.info(f"Evaluation loop: {loop_count} / {MAX_LOOPS} (instance: {instance_id})")
 
     # Check limit
     if loop_count > MAX_LOOPS:
         log.warning(f"MAX LOOPS ({MAX_LOOPS}) exceeded - forcing allow")
-        reset_loop_count()
+        reset_loop_count(loop_file_suffix)
         return jsonify({
             "status": "complete",
             "message": f"MAX SUPERVISOR LOOPS ({MAX_LOOPS}) REACHED.\n\nTask may be incomplete but allowing stop to prevent infinite loop.\n\nPlease review the work manually."
         })
 
     # Read original task
-    original_task = read_original_task()
+    original_task = read_original_task(workspace_path, task_path)
     log.info(f"Original task: {original_task[:100]}...")
 
     # Prepare workspace for this turn
-    turn_workspace = prepare_turn_workspace(loop_count)
+    turn_workspace = prepare_turn_workspace(loop_count, instance_id)
     log.info(f"Turn workspace: {turn_workspace}")
 
-    # Build prompt
-    prompt = build_prompt(original_task)
+    # Build prompt (include workspace path for shared mode)
+    prompt = build_prompt(original_task, workspace_path)
 
     # Save prompt for debugging
     (turn_workspace / "prompt.txt").write_text(prompt)
@@ -279,9 +385,12 @@ def evaluate():
     # Run supervisor
     status, output = run_supervisor(prompt, turn_workspace)
 
+    # Save evaluation to history
+    save_evaluation(instance_id, loop_count, status, output, workspace_path)
+
     # Reset loop counter on completion
     if status == "complete":
-        reset_loop_count()
+        reset_loop_count(loop_file_suffix)
 
     # Build response message
     if status == "complete":
@@ -303,20 +412,64 @@ def evaluate():
 
 @app.route("/health", methods=["GET"])
 def health():
-    """Health check endpoint"""
+    """Health check endpoint with optional instance stats"""
+    instances = list_instances()
     return jsonify({
         "status": "healthy",
         "service": "supervisor",
         "loop_count": get_loop_count(),
-        "max_loops": MAX_LOOPS
+        "max_loops": MAX_LOOPS,
+        "active_instances": len(instances),
+        "instances": instances
+    })
+
+
+@app.route("/instances", methods=["GET"])
+def instances():
+    """List all agent instances with their evaluation history"""
+    return jsonify({
+        "instances": list_instances()
+    })
+
+
+@app.route("/history/<instance_id>", methods=["GET"])
+def history(instance_id: str):
+    """Get evaluation history for a specific instance"""
+    evals = get_evaluation_history(instance_id)
+    loop_count = get_loop_count(f"_{instance_id}" if instance_id != "default" else "")
+    return jsonify({
+        "instance_id": instance_id,
+        "current_loop": loop_count,
+        "evaluations": evals
     })
 
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    """Reset loop counter (for testing)"""
-    reset_loop_count()
-    return jsonify({"status": "reset", "loop_count": 0})
+    """Reset loop counter and optionally history for an instance"""
+    if request.is_json:
+        data = request.get_json()
+        instance_id = data.get("instance")
+    else:
+        instance_id = request.args.get("instance")
+
+    if instance_id:
+        # Reset specific instance
+        loop_file_suffix = f"_{instance_id}" if instance_id != "default" else ""
+        reset_loop_count(loop_file_suffix)
+
+        # Optionally clear history
+        if request.args.get("clear_history") == "true" or (request.is_json and data.get("clear_history")):
+            history_file = get_history_file(instance_id)
+            if history_file.exists():
+                history_file.unlink()
+                log.info(f"Cleared history for instance: {instance_id}")
+
+        return jsonify({"status": "reset", "instance": instance_id, "loop_count": 0})
+    else:
+        # Reset global (legacy)
+        reset_loop_count()
+        return jsonify({"status": "reset", "loop_count": 0})
 
 
 if __name__ == "__main__":

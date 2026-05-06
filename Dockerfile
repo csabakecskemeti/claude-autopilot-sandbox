@@ -35,6 +35,10 @@ COPY --chown=claude:claude agents-backup/ /home/claude/.claude/agents/
 COPY --chown=claude:claude hooks-backup/ /home/claude/.claude/hooks/
 COPY --chown=claude:claude scripts/ /home/claude/.claude/scripts/
 
+# Copy and install SearXNG MCP server for web search
+COPY --chown=claude:claude searxng/mcp-server/ /home/claude/.claude/mcp-servers/searxng/
+RUN cd /home/claude/.claude/mcp-servers/searxng && npm install --production
+
 # Copy CLAUDE.md to .claude dir (will be copied to workspace by init-workspace.sh)
 # Can't copy directly to workspace because volume mount shadows it
 COPY --chown=claude:claude claude-backup/CLAUDE.md /home/claude/.claude/CLAUDE.md
@@ -62,8 +66,8 @@ RUN echo '{\
 }' > /home/claude/.claude.json
 
 # Create user-level settings.json for Claude (base config only)
+# NOTE: MCP servers are configured in ~/.claude.json by init-workspace.sh
 # NOTE: Hooks are configured in PROJECT-LEVEL settings by init-workspace.sh
-# because project-level settings take precedence over user-level
 RUN echo '{\
   "permissions": {\
     "allow": ["*"],\

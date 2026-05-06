@@ -23,11 +23,63 @@ SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
 STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
 STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
 
+# SearXNG URL - default to host.docker.internal for Docker Desktop (Mac/Windows)
+# Can be overridden via SEARXNG_URL environment variable
+SEARXNG_URL="${SEARXNG_URL:-http://host.docker.internal:8888}"
+
+# Update ~/.claude.json with MCP server config
+# MCP servers must be in ~/.claude.json, NOT ~/.claude/settings.json
+CLAUDE_JSON="${HOME}/.claude.json"
+if [ -f "$CLAUDE_JSON" ]; then
+    # Read existing config and add MCP server for this workspace
+    # Using Python for reliable JSON manipulation
+    python3 << PYEOF
+import json
+import os
+
+claude_json_path = "${CLAUDE_JSON}"
+workspace_path = "${WORKSPACE_DIR}"
+searxng_url = "${SEARXNG_URL}"
+mcp_server_path = os.path.expandvars("${HOME}/.claude/mcp-servers/searxng/index.js")
+
+# Read existing config
+with open(claude_json_path, 'r') as f:
+    config = json.load(f)
+
+# Ensure projects dict exists
+if 'projects' not in config:
+    config['projects'] = {}
+
+# Ensure workspace entry exists
+if workspace_path not in config['projects']:
+    config['projects'][workspace_path] = {}
+
+# Add MCP server config for this workspace
+config['projects'][workspace_path]['mcpServers'] = {
+    "searxng": {
+        "type": "stdio",
+        "command": "node",
+        "args": [mcp_server_path],
+        "env": {
+            "SEARXNG_URL": searxng_url
+        }
+    }
+}
+
+# Write updated config
+with open(claude_json_path, 'w') as f:
+    json.dump(config, f, indent=2)
+
+print(f"Added SearXNG MCP server to {claude_json_path} for workspace {workspace_path}")
+PYEOF
+fi
+
 # Generate PROJECT-LEVEL settings.json with hooks configuration
 # Project-level takes precedence over user-level, so hooks MUST be here
+# NOTE: MCP servers go in ~/.claude.json (handled separately below)
 # NOTE: One Stop hook only — langfuse_stop_hook.sh runs Langfuse then supervisor in order.
 #       Claude Code runs multiple Stop commands in PARALLEL; split hooks would not guarantee order.
-# NOTE: Using Python Playwright (not MCP) - called via Bash tool, no MCP config needed
+# NOTE: PreToolUse hook blocks image reads to prevent multimodal errors with local LLMs.
 cat > "${CLAUDE_DIR}/settings.json" << EOF
 {
   "permissions": {
@@ -35,6 +87,18 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOME}/.claude/hooks/block_image_read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
@@ -65,7 +129,8 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
 }
 EOF
 
-echo "Created ${CLAUDE_DIR}/settings.json with hooks and tracing configuration"
+echo "Created ${CLAUDE_DIR}/settings.json with hooks, MCP servers, and tracing configuration"
+echo "SearXNG MCP server configured at: ${SEARXNG_URL}"
 
 # Copy CLAUDE.md to workspace if it doesn't exist
 if [ ! -f "${WORKSPACE_DIR}/CLAUDE.md" ] && [ -f "${HOME}/.claude/CLAUDE.md" ]; then
@@ -76,10 +141,12 @@ fi
 # Ensure the hooks state directory exists
 mkdir -p "${HOME}/.claude/state"
 
-# Verify hook script is executable
+# Verify hook scripts are executable
 chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
+chmod +x "${HOME}/.claude/hooks/block_image_read.sh" 2>/dev/null || true
 
 echo "Workspace initialization complete"
+echo "PreToolUse hook: ${HOME}/.claude/hooks/block_image_read.sh (blocks image reads)"
 echo "Stop hook: ${HOME}/.claude/hooks/langfuse_stop_hook.sh (Langfuse then supervisor)"
 echo "Settings: ${CLAUDE_DIR}/settings.json"
 

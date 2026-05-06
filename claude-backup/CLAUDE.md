@@ -67,14 +67,27 @@ All skills are in `~/.claude/skills/`. **Read each `SKILL.md` for usage.**
 | `/workflow` | Workflow state management | **YES** — start every task |
 | `/tasks` | Task tracking (NOT TodoWrite!) | **YES** — track all work |
 | `/supervisor` | Completion evaluation | **YES** — MUST call before done |
-| `/vision` | Image analysis, UI verification | **YES** for UI projects |
-| `/websearch` | Web search (DuckDuckGo) | When needed |
+| `/vision` | Image analysis, OCR, UI verify | **YES** — ALL image work |
 | `/fetch` | Download URLs to files | When needed |
 | `/browser` | Playwright browser automation | When needed |
 | `/pkg-install` | Package installation | When needed |
 | `/memory` | Persistent memory | When needed |
 | `/file-convert` | Format conversion | When needed |
 | `/sql-query` | Database queries | When needed |
+
+## Web Search (MCP Tool)
+
+Use the `web_search` MCP tool for web searches:
+
+```
+Use the web_search tool to search for "your query here"
+```
+
+This tool:
+- Searches multiple engines (Bing, DuckDuckGo, Startpage, etc.)
+- Returns titles, URLs, snippets, and source engines
+- Fast (~1-2 seconds)
+- No rate limits
 
 ---
 
@@ -100,6 +113,22 @@ Spawn via Task tool when needed:
 | Using `TodoWrite` tool | Use `/tasks` skill |
 | Using `EnterPlanMode` | Just plan and execute |
 | Text output without tool calls | Every response must include actions |
+| **Reading image files with Read tool** | **Use `/vision ocr` or `/vision analyze`** |
+
+## CRITICAL: Image Files
+
+**NEVER use the Read tool on image files (png, jpg, jpeg, gif, webp, heic, etc.).**
+
+Local LLMs cannot handle multimodal content. Reading an image directly will corrupt your session with errors that cannot be recovered without restarting.
+
+**Always use the `/vision` skill instead:**
+```
+/vision ocr /path/to/image.png           # Extract text (OCR)
+/vision analyze /path/to/image.png "prompt"  # Analyze image
+/vision verify http://localhost:5000 "expected UI"  # Verify UI
+```
+
+The vision skill uses a separate API that returns text-only results.
 
 ---
 

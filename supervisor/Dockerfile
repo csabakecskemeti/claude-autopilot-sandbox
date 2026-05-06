@@ -36,11 +36,13 @@ ENV HOME="/home/supervisor"
 COPY --chown=supervisor:supervisor app.py /app/
 COPY --chown=supervisor:supervisor SUPERVISOR_PROMPT.md /app/
 COPY --chown=supervisor:supervisor supervisor_stop_hook.sh /home/supervisor/.claude/hooks/
+COPY --chown=supervisor:supervisor block_image_read.sh /home/supervisor/.claude/hooks/
 COPY --chown=supervisor:supervisor CLAUDE.md /home/supervisor/.claude/
 COPY --chown=supervisor:supervisor settings.json /home/supervisor/.claude/
 
-# Make hook executable
-RUN chmod +x /home/supervisor/.claude/hooks/supervisor_stop_hook.sh
+# Make hooks executable
+RUN chmod +x /home/supervisor/.claude/hooks/supervisor_stop_hook.sh \
+    && chmod +x /home/supervisor/.claude/hooks/block_image_read.sh
 
 # Create default Claude configuration (skip onboarding)
 RUN echo '{\
