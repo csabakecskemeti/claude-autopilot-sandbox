@@ -84,6 +84,27 @@ SETTINGS_EOF
     echo "Generated settings.json: $output_file"
 }
 
+# Generate user-level settings.json (prevents agent from creating its own)
+# This blocks the gap where agent could add env vars or change deny list at user level
+# MUST include skipDangerousModePermissionPrompt to avoid interactive prompt
+# MUST include deny list for local LLM setup (native WebSearch/WebFetch don't work)
+generate_user_settings_json() {
+    local output_file="$1"
+
+    cat > "$output_file" << 'USER_SETTINGS_EOF'
+{
+  "permissions": {
+    "allow": ["*"],
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
+  },
+  "hooks": {},
+  "env": {},
+  "skipDangerousModePermissionPrompt": true
+}
+USER_SETTINGS_EOF
+    echo "Generated user-settings.json: $output_file"
+}
+
 # Load environment variables from env file
 ENV_FILE="${ENV_FILE:-${ENV:-.env}}"
 if [ -f "$ENV_FILE" ]; then
@@ -167,6 +188,9 @@ STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
 
 # Generate settings.json with hooks config (mounted read-only in container)
 generate_settings_json "$WORKSPACE_PATH/.claude/settings.json" "$STOP_HOOK_CMD_TIMEOUT"
+
+# Generate user-level settings.json (prevents agent from creating its own at ~/.claude/settings.json)
+generate_user_settings_json "$WORKSPACE_PATH/.claude/user-settings.json"
 
 # Copy CLAUDE.md (mounted read-only in container)
 cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"

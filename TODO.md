@@ -9,24 +9,30 @@
 ---
 
 ### TODO-013: Agent Can Bypass Own Guardrails (Security Risk)
-**Status:** 🟢 Done (tested & verified)
+**Status:** 🟢 Done (v2 tested & verified)
 **Created:** 2026-05-12
 **Completed:** 2026-05-13
+**Updated:** 2026-05-13 (v2: closed additional gaps found by agent audit)
 **Priority:** Critical (Security)
 **Branch:** `feature/config-hardening`
 
-**Problem:** Agent has full sudo access inside container and can edit:
+**Problem (v1):** Agent has full sudo access inside container and can edit:
 - `~/.claude/hooks/langfuse_stop_hook.sh` - Remove supervisor call, fake completion
 - `~/workspace/.claude/settings.json` - Disable hooks entirely
 - `~/CLAUDE.md` - Change its own behavioral instructions
+
+**Problem (v2 - discovered by agent audit):** Agent could also modify:
+- `~/.claude/settings.json` (user-level) - Add env vars, remove deny list
+- `~/.claude/skills/*` - Modify supervisor to always return COMPLETE
+- `~/.claude/agents/*` - Modify qa-agent to always approve
 
 **Solution:** Read-only bind mounts (kernel-enforced, agent can't bypass even with sudo)
 
 **Implementation:** See `docs/CONFIG_HARDENING_PLAN.md`
 
 **Files modified:**
-- `run.sh` - Added `generate_settings_json()`, generates config on host before container start
-- `docker-compose.yml` - Added 4 read-only bind mounts for protected files
+- `run.sh` - Added `generate_settings_json()` and `generate_user_settings_json()`
+- `docker-compose.yml` - Added 7 read-only bind mounts for protected files
 - `scripts/init-workspace.sh` - Simplified, removed config generation, added mount verification
 
 **Protected paths:**
@@ -34,15 +40,20 @@
 |------|------------|
 | `~/.claude/hooks/*` | Directory, ro |
 | `~/.claude/CLAUDE.md` | File, ro |
+| `~/.claude/settings.json` | File, ro (v2) |
+| `~/.claude/skills/*` | Directory, ro (v2) |
+| `~/.claude/agents/*` | Directory, ro (v2) |
 | `~/workspace/.claude/settings.json` | File, ro |
 | `~/workspace/CLAUDE.md` | File, ro |
 
-**Test results (2026-05-13):**
+**Test results (2026-05-13 v1):**
 - ✅ Agent can READ all config files
 - ✅ Agent gets "EROFS: read-only file system" when trying to modify hooks
 - ✅ Agent gets "EROFS: read-only file system" when trying to modify CLAUDE.md
 - ✅ Agent gets "EROFS: read-only file system" when trying to modify settings.json
 - ✅ Agent CAN still write to workspace (mysettings.txt created successfully)
+
+**v2 requires re-testing after rebuild**
 
 **Related:** `docs/CONFIG_HARDENING_PLAN.md`, TODO-001 (workflow enforcement)
 

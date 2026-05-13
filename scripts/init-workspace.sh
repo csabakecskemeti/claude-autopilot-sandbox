@@ -26,12 +26,61 @@ echo "Verifying protected config files..."
 if [ ! -f "${CLAUDE_DIR}/settings.json" ]; then
     echo "ERROR: settings.json not mounted - run via 'make worker' for security"
     echo "Falling back to unprotected mode (for development only)"
-    # Create minimal settings if not mounted (development/debug mode)
+    # Create full settings if not mounted (development/debug mode)
+    # Uses same config as run.sh generate_settings_json() with default timeouts
     mkdir -p "$CLAUDE_DIR"
-    cat > "${CLAUDE_DIR}/settings.json" << 'FALLBACK_EOF'
+
+    # Calculate stop hook timeout (same logic as run.sh)
+    SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
+    STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
+    STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
+
+    cat > "${CLAUDE_DIR}/settings.json" << FALLBACK_EOF
 {
-  "permissions": { "allow": ["*"], "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"] },
-  "hooks": {}
+  "permissions": {
+    "allow": ["*"],
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOME}/.claude/hooks/block_image_read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${HOME}/.claude/hooks/langfuse_stop_hook.sh",
+            "timeout": ${STOP_HOOK_CMD_TIMEOUT}
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "MAX_THINKING_TOKENS": "0",
+    "TRACE_TO_LANGFUSE": "${TRACE_TO_LANGFUSE:-false}",
+    "LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY:-}",
+    "LANGFUSE_SECRET_KEY": "${LANGFUSE_SECRET_KEY:-}",
+    "LANGFUSE_HOST": "${LANGFUSE_HOST:-http://localhost:3000}",
+    "LANGFUSE_PROJECT": "${LANGFUSE_PROJECT:-claude-code}",
+    "LANGFUSE_DEBUG": "${LANGFUSE_DEBUG:-false}",
+    "MAX_CONTINUE_CYCLES": "${MAX_CONTINUE_CYCLES:-100}",
+    "SUPERVISOR_URL": "${SUPERVISOR_URL:-http://supervisor:8080}",
+    "SUPERVISOR_TIMEOUT": "${SUPERVISOR_TIMEOUT:-3600}",
+    "STOP_HOOK_EXTRA_SEC": "${STOP_HOOK_EXTRA_SEC:-1200}",
+    "SUPERVISOR_AUTONOMY_APPEND": "${SUPERVISOR_AUTONOMY_APPEND:-true}"
+  }
 }
 FALLBACK_EOF
 fi
