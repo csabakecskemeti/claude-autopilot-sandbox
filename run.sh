@@ -24,6 +24,66 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# =============================================================================
+# CONFIG HARDENING: Generate settings.json on host (mounted read-only)
+# This prevents the agent from modifying hooks/settings to bypass guardrails
+# See: docs/CONFIG_HARDENING_PLAN.md
+# =============================================================================
+generate_settings_json() {
+    local output_file="$1"
+    local stop_hook_timeout="$2"
+
+    cat > "$output_file" << SETTINGS_EOF
+{
+  "permissions": {
+    "allow": ["*"],
+    "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claude/.claude/hooks/block_image_read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/claude/.claude/hooks/langfuse_stop_hook.sh",
+            "timeout": ${stop_hook_timeout}
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "MAX_THINKING_TOKENS": "0",
+    "TRACE_TO_LANGFUSE": "${TRACE_TO_LANGFUSE:-false}",
+    "LANGFUSE_PUBLIC_KEY": "${LANGFUSE_PUBLIC_KEY:-}",
+    "LANGFUSE_SECRET_KEY": "${LANGFUSE_SECRET_KEY:-}",
+    "LANGFUSE_HOST": "${LANGFUSE_HOST:-http://localhost:3000}",
+    "LANGFUSE_PROJECT": "${LANGFUSE_PROJECT:-claude-code}",
+    "LANGFUSE_DEBUG": "${LANGFUSE_DEBUG:-false}",
+    "MAX_CONTINUE_CYCLES": "${MAX_CONTINUE_CYCLES:-100}",
+    "SUPERVISOR_URL": "${SUPERVISOR_URL:-http://supervisor:8080}",
+    "SUPERVISOR_TIMEOUT": "${SUPERVISOR_TIMEOUT:-3600}",
+    "STOP_HOOK_EXTRA_SEC": "${STOP_HOOK_EXTRA_SEC:-1200}",
+    "SUPERVISOR_AUTONOMY_APPEND": "${SUPERVISOR_AUTONOMY_APPEND:-true}"
+  }
+}
+SETTINGS_EOF
+    echo "Generated settings.json: $output_file"
+}
+
 # Load environment variables from env file
 ENV_FILE="${ENV_FILE:-${ENV:-.env}}"
 if [ -f "$ENV_FILE" ]; then
@@ -91,14 +151,26 @@ fi
 # Create task directory structure
 echo "Creating task directory: $TASK_DIR"
 mkdir -p "$WORKSPACE_PATH"
+mkdir -p "$WORKSPACE_PATH/.claude"
 mkdir -p "$TASK_STORAGE"
 mkdir -p "$SUPERVISOR_WORKSPACES"
 
-# Copy CLAUDE.md template if workspace doesn't have it
-if [ ! -f "$WORKSPACE_PATH/CLAUDE.md" ] && [ -f "./claude-backup/CLAUDE.md" ]; then
-    cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
-    echo "Initialized workspace with CLAUDE.md"
-fi
+# =============================================================================
+# CONFIG HARDENING: Generate configs on host (will be mounted read-only)
+# Agent cannot modify these files - kernel-enforced via Docker bind mounts
+# =============================================================================
+
+# Calculate stop hook timeout
+SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
+STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
+STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
+
+# Generate settings.json with hooks config (mounted read-only in container)
+generate_settings_json "$WORKSPACE_PATH/.claude/settings.json" "$STOP_HOOK_CMD_TIMEOUT"
+
+# Copy CLAUDE.md (mounted read-only in container)
+cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
+echo "Copied CLAUDE.md (will be mounted read-only)"
 
 # Write original task to IMMUTABLE task storage
 if [ -n "$ORIGINAL_TASK" ]; then
