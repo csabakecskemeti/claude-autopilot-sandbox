@@ -1,8 +1,15 @@
 #!/bin/bash
-# Initialize workspace with proper Claude Code configuration
-# This script runs at container startup to set up tracing and hooks
+# Initialize workspace - runtime setup only
+#
+# CONFIG HARDENING: settings.json and CLAUDE.md generation has been moved to
+# run.sh on the host. These files are now mounted read-only to prevent the
+# agent from modifying hooks/settings to bypass guardrails.
+# See: docs/CONFIG_HARDENING_PLAN.md
 
 set -e
+
+WORKSPACE_DIR="${HOME}/workspace"
+CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
 
 # Start Xvfb virtual display for Playwright (headless browser)
 if ! pgrep -x Xvfb > /dev/null; then
@@ -11,76 +18,24 @@ if ! pgrep -x Xvfb > /dev/null; then
     echo "Started Xvfb virtual display on :99"
 fi
 
-WORKSPACE_DIR="${HOME}/workspace"
-CLAUDE_DIR="${WORKSPACE_DIR}/.claude"
+# =============================================================================
+# Verify protected files are mounted (security check)
+# =============================================================================
+echo "Verifying protected config files..."
 
-# Create .claude directory in workspace if it doesn't exist
-mkdir -p "$CLAUDE_DIR"
+if [ ! -f "${CLAUDE_DIR}/settings.json" ]; then
+    echo "ERROR: settings.json not mounted - run via 'make worker' for security"
+    echo "Falling back to unprotected mode (for development only)"
+    # Create full settings if not mounted (development/debug mode)
+    # Uses same config as run.sh generate_settings_json() with default timeouts
+    mkdir -p "$CLAUDE_DIR"
 
-# Stop hook runtime budget: Langfuse ingest can take a long time, then curl waits up to SUPERVISOR_TIMEOUT.
-# Claude Code kills the whole hook if JSON "timeout" is exceeded — must be > curl max-time + tracing work.
-SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
-STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
-STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
+    # Calculate stop hook timeout (same logic as run.sh)
+    SUPERVISOR_TIMEOUT_SEC="${SUPERVISOR_TIMEOUT:-3600}"
+    STOP_HOOK_EXTRA_SEC="${STOP_HOOK_EXTRA_SEC:-1200}"
+    STOP_HOOK_CMD_TIMEOUT="$((SUPERVISOR_TIMEOUT_SEC + STOP_HOOK_EXTRA_SEC))"
 
-# SearXNG URL - default to host.docker.internal for Docker Desktop (Mac/Windows)
-# Can be overridden via SEARXNG_URL environment variable
-SEARXNG_URL="${SEARXNG_URL:-http://host.docker.internal:8888}"
-
-# Update ~/.claude.json with MCP server config
-# MCP servers must be in ~/.claude.json, NOT ~/.claude/settings.json
-CLAUDE_JSON="${HOME}/.claude.json"
-if [ -f "$CLAUDE_JSON" ]; then
-    # Read existing config and add MCP server for this workspace
-    # Using Python for reliable JSON manipulation
-    python3 << PYEOF
-import json
-import os
-
-claude_json_path = "${CLAUDE_JSON}"
-workspace_path = "${WORKSPACE_DIR}"
-searxng_url = "${SEARXNG_URL}"
-mcp_server_path = os.path.expandvars("${HOME}/.claude/mcp-servers/searxng/index.js")
-
-# Read existing config
-with open(claude_json_path, 'r') as f:
-    config = json.load(f)
-
-# Ensure projects dict exists
-if 'projects' not in config:
-    config['projects'] = {}
-
-# Ensure workspace entry exists
-if workspace_path not in config['projects']:
-    config['projects'][workspace_path] = {}
-
-# Add MCP server config for this workspace
-config['projects'][workspace_path]['mcpServers'] = {
-    "searxng": {
-        "type": "stdio",
-        "command": "node",
-        "args": [mcp_server_path],
-        "env": {
-            "SEARXNG_URL": searxng_url
-        }
-    }
-}
-
-# Write updated config
-with open(claude_json_path, 'w') as f:
-    json.dump(config, f, indent=2)
-
-print(f"Added SearXNG MCP server to {claude_json_path} for workspace {workspace_path}")
-PYEOF
-fi
-
-# Generate PROJECT-LEVEL settings.json with hooks configuration
-# Project-level takes precedence over user-level, so hooks MUST be here
-# NOTE: MCP servers go in ~/.claude.json (handled separately below)
-# NOTE: One Stop hook only — langfuse_stop_hook.sh runs Langfuse then supervisor in order.
-#       Claude Code runs multiple Stop commands in PARALLEL; split hooks would not guarantee order.
-# NOTE: PreToolUse hook blocks image reads to prevent multimodal errors with local LLMs.
-cat > "${CLAUDE_DIR}/settings.json" << EOF
+    cat > "${CLAUDE_DIR}/settings.json" << FALLBACK_EOF
 {
   "permissions": {
     "allow": ["*"],
@@ -127,47 +82,93 @@ cat > "${CLAUDE_DIR}/settings.json" << EOF
     "SUPERVISOR_AUTONOMY_APPEND": "${SUPERVISOR_AUTONOMY_APPEND:-true}"
   }
 }
-EOF
-
-echo "Created ${CLAUDE_DIR}/settings.json with hooks, MCP servers, and tracing configuration"
-echo "SearXNG MCP server configured at: ${SEARXNG_URL}"
-
-# Copy CLAUDE.md to workspace if it doesn't exist
-if [ ! -f "${WORKSPACE_DIR}/CLAUDE.md" ] && [ -f "${HOME}/.claude/CLAUDE.md" ]; then
-    cp "${HOME}/.claude/CLAUDE.md" "${WORKSPACE_DIR}/CLAUDE.md"
-    echo "Copied CLAUDE.md to workspace"
+FALLBACK_EOF
 fi
 
-# Ensure the hooks state directory exists
-mkdir -p "${HOME}/.claude/state"
+if [ ! -f "${WORKSPACE_DIR}/CLAUDE.md" ]; then
+    echo "WARNING: CLAUDE.md not mounted - behavioral instructions may be missing"
+    # Copy from source if available
+    if [ -f "${HOME}/.claude/CLAUDE.md" ]; then
+        cp "${HOME}/.claude/CLAUDE.md" "${WORKSPACE_DIR}/CLAUDE.md"
+        echo "Copied CLAUDE.md from source (unprotected fallback)"
+    fi
+fi
 
-# Verify hook scripts are executable
-chmod +x "${HOME}/.claude/hooks/langfuse_stop_hook.sh" 2>/dev/null || true
-chmod +x "${HOME}/.claude/hooks/block_image_read.sh" 2>/dev/null || true
+# Check if files are read-only (mounted correctly)
+if touch "${CLAUDE_DIR}/settings.json" 2>/dev/null; then
+    echo "WARNING: settings.json is writable - security hardening not active"
+else
+    echo "✓ settings.json is read-only (protected)"
+fi
 
+if touch "${WORKSPACE_DIR}/CLAUDE.md" 2>/dev/null; then
+    echo "WARNING: CLAUDE.md is writable - security hardening not active"
+else
+    echo "✓ CLAUDE.md is read-only (protected)"
+fi
+
+# =============================================================================
+# MCP Server Configuration (still done at runtime)
+# TODO: Consider moving this to host for full protection
+# =============================================================================
+SEARXNG_URL="${SEARXNG_URL:-http://host.docker.internal:8888}"
+CLAUDE_JSON="${HOME}/.claude.json"
+
+if [ -f "$CLAUDE_JSON" ]; then
+    python3 << PYEOF
+import json
+import os
+
+claude_json_path = "${CLAUDE_JSON}"
+workspace_path = "${WORKSPACE_DIR}"
+searxng_url = "${SEARXNG_URL}"
+mcp_server_path = os.path.expandvars("${HOME}/.claude/mcp-servers/searxng/index.js")
+
+# Read existing config
+with open(claude_json_path, 'r') as f:
+    config = json.load(f)
+
+# Ensure projects dict exists
+if 'projects' not in config:
+    config['projects'] = {}
+
+# Ensure workspace entry exists
+if workspace_path not in config['projects']:
+    config['projects'][workspace_path] = {}
+
+# Add MCP server config for this workspace
+config['projects'][workspace_path]['mcpServers'] = {
+    "searxng": {
+        "type": "stdio",
+        "command": "node",
+        "args": [mcp_server_path],
+        "env": {
+            "SEARXNG_URL": searxng_url
+        }
+    }
+}
+
+# Write updated config
+with open(claude_json_path, 'w') as f:
+    json.dump(config, f, indent=2)
+
+print(f"Configured SearXNG MCP server: {searxng_url}")
+PYEOF
+fi
+
+# =============================================================================
+# Workspace initialization complete
+# =============================================================================
+echo ""
 echo "Workspace initialization complete"
-echo "PreToolUse hook: ${HOME}/.claude/hooks/block_image_read.sh (blocks image reads)"
-echo "Stop hook: ${HOME}/.claude/hooks/langfuse_stop_hook.sh (Langfuse then supervisor)"
-echo "Settings: ${CLAUDE_DIR}/settings.json"
+echo "  Settings: ${CLAUDE_DIR}/settings.json"
+echo "  Instructions: ${WORKSPACE_DIR}/CLAUDE.md"
+echo "  Hooks: ${HOME}/.claude/hooks/"
 
-# Check if there's an original task to work on
+# Display task if present
 TASK_FILE="${WORKSPACE_DIR}/.original_task"
 if [ -f "$TASK_FILE" ]; then
     TASK_CONTENT=$(cat "$TASK_FILE")
-
-    # Create TASK.md that Claude will see and act on
-    cat > "${WORKSPACE_DIR}/TASK.md" << TASKEOF
-# YOUR TASK
-
-Complete this task autonomously:
-
----
-${TASK_CONTENT}
----
-
-Start working on this immediately. The supervisor will verify your work when you're done.
-TASKEOF
-
     echo ""
     echo "=========================================="
     echo "TASK TO COMPLETE:"

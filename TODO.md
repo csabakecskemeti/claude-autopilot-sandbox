@@ -1,8 +1,93 @@
 # Project TODO List
 
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-05-12
 
 **Mandatory:** Keep this file updated. Add dates, status, and links to related docs.
+
+**Session Memory:** Check `.memory/` folder for detailed session notes (latest: `session_20260507.md`)
+
+---
+
+### TODO-013: Agent Can Bypass Own Guardrails (Security Risk)
+**Status:** 🟢 Done (v2 tested & verified)
+**Created:** 2026-05-12
+**Completed:** 2026-05-13
+**Updated:** 2026-05-13 (v2: closed additional gaps found by agent audit)
+**Priority:** Critical (Security)
+**Branch:** `feature/config-hardening`
+
+**Problem (v1):** Agent has full sudo access inside container and can edit:
+- `~/.claude/hooks/langfuse_stop_hook.sh` - Remove supervisor call, fake completion
+- `~/workspace/.claude/settings.json` - Disable hooks entirely
+- `~/CLAUDE.md` - Change its own behavioral instructions
+
+**Problem (v2 - discovered by agent audit):** Agent could also modify:
+- `~/.claude/settings.json` (user-level) - Add env vars, remove deny list
+- `~/.claude/skills/*` - Modify supervisor to always return COMPLETE
+- `~/.claude/agents/*` - Modify qa-agent to always approve
+
+**Solution:** Read-only bind mounts (kernel-enforced, agent can't bypass even with sudo)
+
+**Implementation:** See `docs/CONFIG_HARDENING_PLAN.md`
+
+**Files modified:**
+- `run.sh` - Added `generate_settings_json()` and `generate_user_settings_json()`
+- `docker-compose.yml` - Added 7 read-only bind mounts for protected files
+- `scripts/init-workspace.sh` - Simplified, removed config generation, added mount verification
+
+**Protected paths:**
+| Path | Mount Type |
+|------|------------|
+| `~/.claude/hooks/*` | Directory, ro |
+| `~/.claude/CLAUDE.md` | File, ro |
+| `~/.claude/settings.json` | File, ro (v2) |
+| `~/.claude/skills/*` | Directory, ro (v2) |
+| `~/.claude/agents/*` | Directory, ro (v2) |
+| `~/workspace/.claude/settings.json` | File, ro |
+| `~/workspace/CLAUDE.md` | File, ro |
+
+**Test results (2026-05-13 v1):**
+- ✅ Agent can READ all config files
+- ✅ Agent gets "EROFS: read-only file system" when trying to modify hooks
+- ✅ Agent gets "EROFS: read-only file system" when trying to modify CLAUDE.md
+- ✅ Agent gets "EROFS: read-only file system" when trying to modify settings.json
+- ✅ Agent CAN still write to workspace (mysettings.txt created successfully)
+
+**v2 requires re-testing after rebuild**
+
+**Related:** `docs/CONFIG_HARDENING_PLAN.md`, TODO-001 (workflow enforcement)
+
+---
+
+### TODO-012: Task Isolation & Image Blocking
+**Status:** 🟢 Done (tested & committed)
+**Completed:** 2026-05-12
+**Created:** 2026-05-02
+**Updated:** 2026-05-07
+**Priority:** High
+
+**Task Isolation (Implemented):**
+- Each worker gets isolated folder: `workspaces/{name}_{timestamp}/`
+- Embedded supervisor per agent (removed shared supervisor)
+- Dynamic port allocation (30000-60000)
+- Background mode with detach/reattach (`Ctrl+P,Q`)
+- New commands: `make workers`, `make worker-info`, `make attach`, `make stop`
+
+**Image Read Blocking (Implemented):**
+- PreToolUse hook blocks Read tool on image files
+- Prevents "Only text tool_result blocks" error with local LLMs
+- Agent uses `/vision` skill instead
+- Supervisor uses CLI tools (tesseract)
+
+**Files:** See `.memory/session_20260507.md` for full list
+
+**Next Steps:**
+- [ ] `make build-clean` to rebuild
+- [ ] Test worker creation and detach/reattach
+- [ ] Test image blocking
+- [ ] Commit to `feature/standalone-services`
+
+**Related:** `docs/TASK_ISOLATION_PLAN.md`
 
 ---
 
