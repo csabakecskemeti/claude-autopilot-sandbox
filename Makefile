@@ -33,7 +33,13 @@ help:
 	@echo "  make worker W=myworker TASK=\"…\"     (aliases: w=, WORKER=, T=/TASK=, TF=/TASKFILE=)"
 	@echo "  make worker W=myworker TASKFILE=task.txt"
 	@echo "  make worker W=myworker ENV=.env2"
+	@echo "  make worker W=myworker HARDENING=moderate"
 	@echo "  make worker W=myworker                  (interactive, no initial TASK)"
+	@echo ""
+	@echo "  HARDENING levels (default: strict):"
+	@echo "    strict:     All config locked (production, untrusted tasks)"
+	@echo "    moderate:   Guardrails locked, other tools writable (trusted dev)"
+	@echo "    permissive: Minimal protection (debugging, agent development)"
 	@echo ""
 	@echo "Worker management:"
 	@echo "  make workers            List worker runs (folders under workspaces/)"
@@ -178,15 +184,17 @@ worker:
 		echo "   or: make worker W=myworker TASKFILE=…   (alias: TF=)"; \
 		echo "   or: make worker W=myworker ENV=.env2"; \
 		echo "   or: make worker W=myworker SEARXNG=1"; \
+		echo "   or: make worker W=myworker HARDENING=moderate"; \
 		exit 1; \
 	fi; \
 	TFILE="$(strip $(TASKFILE))"; [ -n "$$TFILE" ] || TFILE="$(strip $(TF))"; \
 	E="$(strip $(ENV))"; [ -n "$$E" ] || E=".env"; export ENV="$$E"; \
+	H="$(strip $(HARDENING))"; [ -n "$$H" ] || H="strict"; \
 	if [ -n "$$TFILE" ]; then \
-		INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "TF=$$TFILE"; \
+		HARDENING="$$H" INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "TF=$$TFILE"; \
 	else \
 		TT="$(strip $(TASK))"; [ -n "$$TT" ] || TT="$(strip $(T))"; \
-		INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "$$TT"; \
+		HARDENING="$$H" INCLUDE_SEARXNG=$(SEARXNG) ./run.sh "$$WL" "$$TT"; \
 	fi
 
 # ============================================================================

@@ -1,0 +1,22 @@
+# Hardening Level: PERMISSIVE
+# Minimal protection - only absolute essentials locked
+# Use case: Development, debugging, fully trusted environments, testing new capabilities
+#
+# Locked: stop hook (bare minimum gate), project settings (keeps hooks enabled)
+# Writable: supervisor skill, qa-agent, CLAUDE.md files, user settings, all other skills/agents
+# See: docs/HARDENING_LEVELS.md
+
+services:
+  agent:
+    volumes:
+      # =========================================================================
+      # PERMISSIVE HARDENING: Minimal protection
+      # Only the stop hook and project settings are locked (absolute minimum)
+      # Agent could modify supervisor/qa-agent/CLAUDE.md (use for debugging only)
+      # =========================================================================
+
+      # Stop hook only (bare minimum gate - ensures supervisor always called)
+      - ./hooks-backup/langfuse_stop_hook.sh:/home/claude/.claude/hooks/langfuse_stop_hook.sh:ro
+
+      # Project-level settings (keeps hooks enabled - without this, agent could disable hooks)
+      - ${WORKSPACE_PATH:-./workspaces/default}/.claude/settings.json:/home/claude/workspace/.claude/settings.json:ro

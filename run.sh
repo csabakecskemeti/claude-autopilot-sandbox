@@ -114,6 +114,26 @@ if [ -f "$ENV_FILE" ]; then
     echo "Using config: $ENV_FILE"
 fi
 
+# =============================================================================
+# HARDENING LEVEL: Controls config protection (see docs/HARDENING_LEVELS.md)
+#   strict (default): All config locked - production autonomous runs
+#   moderate:         Guardrails locked, can create new tools - trusted dev tasks
+#   permissive:       Minimal protection - debugging, agent development
+# =============================================================================
+HARDENING="${HARDENING:-strict}"
+
+# Validate hardening level
+case "$HARDENING" in
+    strict|moderate|permissive)
+        echo "Hardening level: $HARDENING"
+        ;;
+    *)
+        echo "Error: Invalid HARDENING level: $HARDENING"
+        echo "Valid options: strict, moderate, permissive"
+        exit 1
+        ;;
+esac
+
 # Command line args
 WORKSPACE_NAME="${1:-${WORKSPACE_NAME:-default}}"
 ORIGINAL_TASK="${2:-${ORIGINAL_TASK:-}}"
@@ -226,7 +246,8 @@ cat > "$METADATA_FILE" << EOF
     "file": "$ENV_FILE",
     "llm_host": "${LLM_HOST:-}",
     "llm_port": ${LLM_PORT:-11234},
-    "llm_model": "${LLM_MODEL:-}"
+    "llm_model": "${LLM_MODEL:-}",
+    "hardening": "$HARDENING"
   },
   "containers": {
     "agent": {
@@ -270,6 +291,7 @@ echo "=========================================="
 echo "Task: $TASK_FULL_NAME"
 echo "=========================================="
 echo "  Config: $ENV_FILE"
+echo "  Hardening: $HARDENING"
 echo "  LLM: ${LLM_HOST:-localhost}:${LLM_PORT:-11234} (${LLM_MODEL:-default})"
 echo ""
 echo "  Folders:"
@@ -318,8 +340,8 @@ export COMPOSE_PROJECT_NAME="${CONTAINER_PREFIX}-${TASK_FULL_NAME}"
 # Update metadata status to running
 jq '.status.state = "running"' "$METADATA_FILE" > "$METADATA_FILE.tmp" && mv "$METADATA_FILE.tmp" "$METADATA_FILE"
 
-# Build compose command (supervisor always included, searxng optional)
-COMPOSE_CMD="docker compose"
+# Build compose command with hardening overlay (supervisor always included, searxng optional)
+COMPOSE_CMD="docker compose -f docker-compose.yml -f docker-compose.${HARDENING}.yml"
 if [ "$INCLUDE_SEARXNG" = "true" ]; then
     COMPOSE_CMD="$COMPOSE_CMD --profile searxng"
 fi

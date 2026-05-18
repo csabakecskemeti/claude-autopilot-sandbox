@@ -1,6 +1,6 @@
 # Project TODO List
 
-**Last Updated:** 2026-05-12
+**Last Updated:** 2026-05-17
 
 **Mandatory:** Keep this file updated. Add dates, status, and links to related docs.
 
@@ -55,7 +55,48 @@
 
 **v2 requires re-testing after rebuild**
 
-**Related:** `docs/CONFIG_HARDENING_PLAN.md`, TODO-001 (workflow enforcement)
+**Related:** `docs/CONFIG_HARDENING_PLAN.md`, TODO-001 (workflow enforcement), TODO-014 (tiered hardening)
+
+---
+
+### TODO-014: Tiered Hardening Levels
+**Status:** 🟢 Done
+**Created:** 2026-05-17
+**Completed:** 2026-05-17
+**Priority:** Medium (Enhancement)
+**Branch:** `feature/tiered-hardening`
+
+**Problem:** TODO-013 implemented all-or-nothing config hardening. In some scenarios (trusted dev, debugging), agent may legitimately need to create new tools or modify non-critical configs.
+
+**Solution:** Three configurable hardening levels via `HARDENING` env var:
+
+| Level | Description | Use Case |
+|-------|-------------|----------|
+| `strict` (default) | All config locked | Production, untrusted tasks |
+| `moderate` | Guardrails locked, other tools writable | Trusted dev tasks |
+| `permissive` | Minimal protection (stop hook + project settings) | Debugging, agent development |
+
+**Implementation:** Docker Compose overlay files
+
+**Files created:**
+- `docker-compose.strict.yml` - All ro mounts
+- `docker-compose.moderate.yml` - Guardrail ro mounts only
+- `docker-compose.permissive.yml` - Minimal ro mounts
+
+**Files modified:**
+- `docker-compose.yml` - Removed ro mounts (moved to overlays)
+- `run.sh` - Added HARDENING validation and overlay selection
+- `Makefile` - Added HARDENING option documentation
+- `docs/HARDENING_LEVELS.md` - Updated status to Implemented
+
+**Usage:**
+```bash
+make worker W=task TASK="..." HARDENING=strict    # default
+make worker W=task TASK="..." HARDENING=moderate
+make worker W=task TASK="..." HARDENING=permissive
+```
+
+**Related:** TODO-013 (base hardening), `docs/HARDENING_LEVELS.md`
 
 ---
 

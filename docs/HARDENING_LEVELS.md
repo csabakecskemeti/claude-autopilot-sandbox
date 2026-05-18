@@ -1,8 +1,9 @@
 # Hardening Levels: Configurable Security vs Flexibility
 
-**Status:** 📋 Planned
+**Status:** ✅ Implemented
 **Created:** 2026-05-13
-**Related:** TODO-013, `docs/CONFIG_HARDENING_PLAN.md`
+**Implemented:** 2026-05-17
+**Related:** TODO-013, TODO-014, `docs/CONFIG_HARDENING_PLAN.md`
 
 ---
 
@@ -144,12 +145,12 @@ This is not currently implemented because:
 
 ---
 
-## Implementation Approach
+## Implementation
 
 ### Docker Compose Overlays
 
 ```
-docker-compose.yml              # Base config (always used)
+docker-compose.yml              # Base config (always used, no hardening mounts)
 docker-compose.strict.yml       # Strict overlay (all ro mounts)
 docker-compose.moderate.yml     # Moderate overlay (guardrails only)
 docker-compose.permissive.yml   # Permissive overlay (minimal)
@@ -162,13 +163,15 @@ docker-compose.permissive.yml   # Permissive overlay (minimal)
 make worker W=task-name TASK="..."
 
 # Moderate - guardrails locked, can create new tools
-HARDENING=moderate make worker W=task-name TASK="..."
+make worker W=task-name TASK="..." HARDENING=moderate
 
 # Permissive - minimal protection, development mode
-HARDENING=permissive make worker W=task-name TASK="..."
+make worker W=task-name TASK="..." HARDENING=permissive
 ```
 
 ### run.sh Logic
+
+The HARDENING variable is validated and used to select the appropriate overlay:
 
 ```bash
 HARDENING="${HARDENING:-strict}"
@@ -188,17 +191,17 @@ docker compose \
 
 ---
 
-## File Changes Required
+## Files Changed
 
 | File | Change |
 |------|--------|
-| `docker-compose.yml` | Remove all ro mounts (move to overlays), keep base config |
-| `docker-compose.strict.yml` | NEW: All ro mounts |
-| `docker-compose.moderate.yml` | NEW: Guardrail ro mounts only |
-| `docker-compose.permissive.yml` | NEW: Minimal ro mounts |
-| `run.sh` | Add HARDENING logic, use compose overlays |
-| `Makefile` | Document HARDENING option |
-| `README.md` | Document hardening levels |
+| `docker-compose.yml` | Removed ro mounts (moved to overlays), base config only |
+| `docker-compose.strict.yml` | NEW: All ro mounts (hooks, skills, agents, CLAUDE.md, settings) |
+| `docker-compose.moderate.yml` | NEW: Guardrail ro mounts (hooks, supervisor, workflow, qa-agent, CLAUDE.md, settings) |
+| `docker-compose.permissive.yml` | NEW: Minimal ro mounts (stop hook, project settings only) |
+| `run.sh` | Added HARDENING validation and compose overlay selection |
+| `Makefile` | Added HARDENING option documentation and passthrough |
+| `docs/HARDENING_LEVELS.md` | Updated status to Implemented |
 
 ---
 
