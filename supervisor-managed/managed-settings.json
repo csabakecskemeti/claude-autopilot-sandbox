@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowManagedPermissionRulesOnly": true,
+  "permissions": {
+    "deny": [
+      "Write(/etc/claude-code/**)",
+      "Edit(/etc/claude-code/**)",
+      "Write(/etc/claude-hooks/**)",
+      "Edit(/etc/claude-hooks/**)",
+      "Write(/app/SUPERVISOR_PROMPT.md)",
+      "Edit(/app/SUPERVISOR_PROMPT.md)",
+      "Write(~/.claude/**)",
+      "Edit(~/.claude/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/etc/claude-hooks/block_image_read.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/etc/claude-hooks/supervisor_stop_hook.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
