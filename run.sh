@@ -114,6 +114,91 @@ if [ -f "$ENV_FILE" ]; then
     echo "Using config: $ENV_FILE"
 fi
 
+# =============================================================================
+# AUTO-TUNNEL SETUP (macOS only)
+# Automatically create socat tunnels for LAN devices
+# =============================================================================
+
+if [ "$(uname)" = "Darwin" ]; then
+    # Check if socat is installed
+    if ! command -v socat > /dev/null 2>&1; then
+        echo ""
+        echo "⚠ socat not installed (required for LAN access on macOS)"
+        echo ""
+        read -p "Install socat now? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            if command -v brew > /dev/null 2>&1; then
+                brew install socat
+                echo "✓ socat installed"
+            else
+                echo "❌ Homebrew not found. Please install manually:"
+                echo "   https://brew.sh"
+                exit 1
+            fi
+        else
+            echo "⚠ Continuing without tunnels - LAN devices may not be reachable"
+        fi
+    fi
+
+    # Auto-start tunnels if socat is available
+    if command -v socat > /dev/null 2>&1; then
+        echo ""
+        echo "Checking tunnel requirements..."
+
+        # Use the tunnel script to auto-start tunnels
+        if ./scripts/tunnel.sh start 2>&1 | grep -q "Started.*tunnel"; then
+            echo "✓ Tunnels configured"
+
+            # Override environment variables to use tunneled localhost
+            # This way docker-compose will use host.docker.internal instead of LAN addresses
+
+            # Helper function to check if host is LAN
+            is_lan_host() {
+                local host="$1"
+                [ -z "$host" ] && return 1
+                [[ "$host" =~ ^(localhost|127\.|::1|host\.docker\.internal)$ ]] && return 1
+                [ "$host" = "host.docker.internal" ] && return 1
+                [[ "$host" =~ ^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.) ]] && return 0
+                [[ "$host" =~ \.local$ ]] && return 0
+                return 1
+            }
+
+            # Override LLM_HOST if it's a LAN device
+            if is_lan_host "$LLM_HOST"; then
+                export ORIGINAL_LLM_HOST="$LLM_HOST"
+                export LLM_HOST="host.docker.internal"
+                echo "  → LLM_HOST: $ORIGINAL_LLM_HOST (via tunnel)"
+            fi
+
+            # Override VISION_HOST if it's a LAN device and different from LLM_HOST
+            if [ -n "$VISION_HOST" ] && [ "$VISION_HOST" != "$ORIGINAL_LLM_HOST" ]; then
+                if is_lan_host "$VISION_HOST"; then
+                    export ORIGINAL_VISION_HOST="$VISION_HOST"
+                    export VISION_HOST="host.docker.internal"
+                    echo "  → VISION_HOST: $ORIGINAL_VISION_HOST (via tunnel)"
+                fi
+            elif [ -n "$VISION_HOST" ] && [ "$VISION_HOST" = "$ORIGINAL_LLM_HOST" ]; then
+                # If VISION_HOST was same as LLM_HOST, update it too
+                export VISION_HOST="host.docker.internal"
+            fi
+
+            # Override SUPERVISOR_LLM_HOST if it's a LAN device and different
+            if [ -n "$SUPERVISOR_LLM_HOST" ] && [ "$SUPERVISOR_LLM_HOST" != "$ORIGINAL_LLM_HOST" ]; then
+                if is_lan_host "$SUPERVISOR_LLM_HOST"; then
+                    export ORIGINAL_SUPERVISOR_LLM_HOST="$SUPERVISOR_LLM_HOST"
+                    export SUPERVISOR_LLM_HOST="host.docker.internal"
+                    echo "  → SUPERVISOR_LLM_HOST: $ORIGINAL_SUPERVISOR_LLM_HOST (via tunnel)"
+                fi
+            elif [ -n "$SUPERVISOR_LLM_HOST" ] && [ "$SUPERVISOR_LLM_HOST" = "$ORIGINAL_LLM_HOST" ]; then
+                export SUPERVISOR_LLM_HOST="host.docker.internal"
+            fi
+        else
+            echo "  No tunnels needed (all services local)"
+        fi
+    fi
+fi
+
 # Command line args
 WORKSPACE_NAME="${1:-${WORKSPACE_NAME:-default}}"
 ORIGINAL_TASK="${2:-${ORIGINAL_TASK:-}}"
