@@ -164,34 +164,33 @@ if [ "$(uname)" = "Darwin" ]; then
                 return 1
             }
 
+            # Override all LAN hosts to use host.docker.internal
+            # Tunnels will forward from host.docker.internal:<port> to actual LAN host
+
             # Override LLM_HOST if it's a LAN device
             if is_lan_host "$LLM_HOST"; then
                 export ORIGINAL_LLM_HOST="$LLM_HOST"
+                export ORIGINAL_LLM_PORT="${LLM_PORT:-11234}"
                 export LLM_HOST="host.docker.internal"
-                echo "  → LLM_HOST: $ORIGINAL_LLM_HOST (via tunnel)"
+                echo "  → LLM: $ORIGINAL_LLM_HOST:$ORIGINAL_LLM_PORT (via tunnel)"
             fi
 
-            # Override VISION_HOST if it's a LAN device and different from LLM_HOST
-            if [ -n "$VISION_HOST" ] && [ "$VISION_HOST" != "$ORIGINAL_LLM_HOST" ]; then
-                if is_lan_host "$VISION_HOST"; then
-                    export ORIGINAL_VISION_HOST="$VISION_HOST"
-                    export VISION_HOST="host.docker.internal"
-                    echo "  → VISION_HOST: $ORIGINAL_VISION_HOST (via tunnel)"
-                fi
-            elif [ -n "$VISION_HOST" ] && [ "$VISION_HOST" = "$ORIGINAL_LLM_HOST" ]; then
-                # If VISION_HOST was same as LLM_HOST, update it too
+            # Override VISION_HOST if it's a LAN device
+            # (Always check - can be same host but different port!)
+            if [ -n "$VISION_HOST" ] && is_lan_host "$VISION_HOST"; then
+                export ORIGINAL_VISION_HOST="$VISION_HOST"
+                export ORIGINAL_VISION_PORT="${VISION_PORT:-11234}"
                 export VISION_HOST="host.docker.internal"
+                echo "  → Vision: $ORIGINAL_VISION_HOST:$ORIGINAL_VISION_PORT (via tunnel)"
             fi
 
-            # Override SUPERVISOR_LLM_HOST if it's a LAN device and different
-            if [ -n "$SUPERVISOR_LLM_HOST" ] && [ "$SUPERVISOR_LLM_HOST" != "$ORIGINAL_LLM_HOST" ]; then
-                if is_lan_host "$SUPERVISOR_LLM_HOST"; then
-                    export ORIGINAL_SUPERVISOR_LLM_HOST="$SUPERVISOR_LLM_HOST"
-                    export SUPERVISOR_LLM_HOST="host.docker.internal"
-                    echo "  → SUPERVISOR_LLM_HOST: $ORIGINAL_SUPERVISOR_LLM_HOST (via tunnel)"
-                fi
-            elif [ -n "$SUPERVISOR_LLM_HOST" ] && [ "$SUPERVISOR_LLM_HOST" = "$ORIGINAL_LLM_HOST" ]; then
+            # Override SUPERVISOR_LLM_HOST if it's a LAN device
+            # (Always check - can be same host but different port!)
+            if [ -n "$SUPERVISOR_LLM_HOST" ] && is_lan_host "$SUPERVISOR_LLM_HOST"; then
+                export ORIGINAL_SUPERVISOR_LLM_HOST="$SUPERVISOR_LLM_HOST"
+                export ORIGINAL_SUPERVISOR_LLM_PORT="${SUPERVISOR_LLM_PORT:-11234}"
                 export SUPERVISOR_LLM_HOST="host.docker.internal"
+                echo "  → Supervisor: $ORIGINAL_SUPERVISOR_LLM_HOST:$ORIGINAL_SUPERVISOR_LLM_PORT (via tunnel)"
             fi
         else
             echo "  No tunnels needed (all services local)"

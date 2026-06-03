@@ -7,11 +7,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Load .env file if it exists
-if [ -f "$PROJECT_ROOT/.env" ]; then
+# Load environment variables from env file (respects ENV or ENV_FILE variable)
+ENV_FILE="${ENV_FILE:-${ENV:-.env}}"
+if [ -f "$PROJECT_ROOT/$ENV_FILE" ]; then
     set -a
-    source "$PROJECT_ROOT/.env"
+    source "$PROJECT_ROOT/$ENV_FILE"
     set +a
+    echo "Loaded config: $ENV_FILE" >&2
+elif [ "$ENV_FILE" != ".env" ]; then
+    echo "Warning: $ENV_FILE not found, using defaults" >&2
 fi
 
 # Colors for output
@@ -193,40 +197,51 @@ auto_tunnels() {
 
     # Check LLM_HOST
     if is_lan_host "$LLM_HOST"; then
-        log_info "LLM_HOST ($LLM_HOST) is on LAN, tunnel required"
-        if start_tunnel "$LLM_HOST" "${LLM_PORT:-11234}"; then
-            tunnels_started=$((tunnels_started + 1))
+        local llm_port="${LLM_PORT:-11234}"
+        if ! is_tunnel_running "$llm_port"; then
+            log_info "LLM_HOST ($LLM_HOST:$llm_port) is on LAN, tunnel required"
+            if start_tunnel "$LLM_HOST" "$llm_port"; then
+                tunnels_started=$((tunnels_started + 1))
+            fi
+        else
+            log_info "LLM_HOST port $llm_port already tunneled"
         fi
     else
         log_info "LLM_HOST ($LLM_HOST) is local, no tunnel needed"
     fi
 
-    # Check VISION_HOST if different from LLM_HOST
-    if [ -n "$VISION_HOST" ] && [ "$VISION_HOST" != "$LLM_HOST" ]; then
-        if is_lan_host "$VISION_HOST"; then
-            log_info "VISION_HOST ($VISION_HOST) is on LAN, tunnel required"
-            if start_tunnel "$VISION_HOST" "${VISION_PORT:-11234}"; then
+    # Check VISION_HOST (always check, even if same host as LLM - different port!)
+    if [ -n "$VISION_HOST" ] && is_lan_host "$VISION_HOST"; then
+        local vision_port="${VISION_PORT:-11234}"
+        if ! is_tunnel_running "$vision_port"; then
+            log_info "VISION_HOST ($VISION_HOST:$vision_port) is on LAN, tunnel required"
+            if start_tunnel "$VISION_HOST" "$vision_port"; then
                 tunnels_started=$((tunnels_started + 1))
             fi
         else
-            log_info "VISION_HOST ($VISION_HOST) is local, no tunnel needed"
+            log_info "VISION_HOST port $vision_port already tunneled"
         fi
+    elif [ -n "$VISION_HOST" ]; then
+        log_info "VISION_HOST ($VISION_HOST) is local, no tunnel needed"
     fi
 
-    # Check SUPERVISOR_LLM_HOST if different from LLM_HOST
-    if [ -n "$SUPERVISOR_LLM_HOST" ] && [ "$SUPERVISOR_LLM_HOST" != "$LLM_HOST" ]; then
-        if is_lan_host "$SUPERVISOR_LLM_HOST"; then
-            log_info "SUPERVISOR_LLM_HOST ($SUPERVISOR_LLM_HOST) is on LAN, tunnel required"
-            if start_tunnel "$SUPERVISOR_LLM_HOST" "${SUPERVISOR_LLM_PORT:-11234}"; then
+    # Check SUPERVISOR_LLM_HOST (always check, even if same host - different port!)
+    if [ -n "$SUPERVISOR_LLM_HOST" ] && is_lan_host "$SUPERVISOR_LLM_HOST"; then
+        local supervisor_port="${SUPERVISOR_LLM_PORT:-11234}"
+        if ! is_tunnel_running "$supervisor_port"; then
+            log_info "SUPERVISOR_LLM_HOST ($SUPERVISOR_LLM_HOST:$supervisor_port) is on LAN, tunnel required"
+            if start_tunnel "$SUPERVISOR_LLM_HOST" "$supervisor_port"; then
                 tunnels_started=$((tunnels_started + 1))
             fi
         else
-            log_info "SUPERVISOR_LLM_HOST ($SUPERVISOR_LLM_HOST) is local, no tunnel needed"
+            log_info "SUPERVISOR_LLM_HOST port $supervisor_port already tunneled"
         fi
+    elif [ -n "$SUPERVISOR_LLM_HOST" ]; then
+        log_info "SUPERVISOR_LLM_HOST ($SUPERVISOR_LLM_HOST) is local, no tunnel needed"
     fi
 
     if [ $tunnels_started -eq 0 ]; then
-        log_info "No tunnels needed"
+        log_info "No tunnels needed (all already running)"
     else
         log_success "Started $tunnels_started tunnel(s)"
     fi
