@@ -11,7 +11,8 @@ WORKER :=
 .PHONY: help setup build build-base build-clean worker stop stop-all attach worker-info logs ps clean shell status prune test env env-clone \
         workers worker-clean worker-remove workers-clean \
         searxng-start searxng-stop searxng-status searxng-test searxng-logs \
-        langfuse-install langfuse-start langfuse-stop langfuse-status langfuse-logs langfuse-clean
+        langfuse-install langfuse-start langfuse-stop langfuse-status langfuse-logs langfuse-clean \
+        tunnel tunnel-start tunnel-stop tunnel-status tunnel-test check-socat install-socat
 
 # Default target
 help:
@@ -75,6 +76,13 @@ help:
 	@echo "  make langfuse-status    Check Langfuse status"
 	@echo "  make langfuse-logs      Follow Langfuse logs"
 	@echo "  make langfuse-clean     Remove Langfuse installation"
+	@echo ""
+	@echo "Tunnels (macOS LAN Access - auto-managed):"
+	@echo "  make tunnel             Auto-start tunnels based on .env"
+	@echo "  make tunnel-status      Show running tunnels"
+	@echo "  make tunnel-stop        Stop all tunnels"
+	@echo "  make tunnel-test        Test tunnel connectivity"
+	@echo "  make install-socat      Install socat (required for tunnels)"
 
 # ============================================================================
 # Setup
@@ -130,11 +138,19 @@ test:
 	fi; \
 	echo "=== Config: $$ENV_FILE ==="; \
 	echo ""; \
+	echo "=== Tunnels (macOS only) ==="; \
+	if [ "$$(uname)" = "Darwin" ]; then \
+		./scripts/tunnel.sh status | grep -q "No tunnels" && echo "  INFO - No tunnels running" || true; \
+		./scripts/tunnel.sh status | grep -q "Port" && echo "  OK - Tunnels active" || true; \
+	else \
+		echo "  N/A - Not on macOS"; \
+	fi; \
+	echo ""; \
 	echo "=== LLM Server ==="; \
 	. ./$$ENV_FILE && echo "Testing $$LLM_HOST:$$LLM_PORT..."; \
 	. ./$$ENV_FILE && curl -s --max-time 5 "http://$$LLM_HOST:$$LLM_PORT/v1/models" > /dev/null \
 		&& echo "  OK - LLM server reachable" \
-		|| echo "  FAILED - Cannot reach LLM server"
+		|| echo "  FAILED - Cannot reach LLM server (tunnel may be needed)"
 	@echo ""
 	@echo "=== SearXNG (Web Search) ==="
 	@if curl -s --max-time 2 "http://localhost:8888/healthz" > /dev/null 2>&1; then \
@@ -532,3 +548,58 @@ langfuse-clean:
 	else \
 		echo "Langfuse not installed"; \
 	fi
+
+# ============================================================================
+# Tunnel Management (macOS LAN Access)
+# ============================================================================
+
+# Check if socat is installed
+check-socat:
+	@if ! command -v socat > /dev/null 2>&1; then \
+		echo "❌ socat not installed"; \
+		echo ""; \
+		echo "Tunnels are required on macOS to access LAN devices from Docker containers."; \
+		echo "Install with: make install-socat"; \
+		exit 1; \
+	else \
+		echo "✓ socat installed"; \
+	fi
+
+# Install socat
+install-socat:
+	@echo "Installing socat..."
+	@if command -v brew > /dev/null 2>&1; then \
+		brew install socat; \
+		echo "✓ socat installed via Homebrew"; \
+	else \
+		echo "❌ Homebrew not found. Please install Homebrew first:"; \
+		echo "   /bin/bash -c \"\$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""; \
+		exit 1; \
+	fi
+
+# Auto-start tunnels based on .env
+tunnel: check-socat
+	@./scripts/tunnel.sh start
+
+# Alias for tunnel
+tunnel-start: tunnel
+
+# Stop all tunnels
+tunnel-stop:
+	@./scripts/tunnel.sh stop
+
+# Show tunnel status
+tunnel-status:
+	@./scripts/tunnel.sh status
+
+# Test tunnel connectivity
+tunnel-test:
+	@if [ -z "$(PORT)" ]; then \
+		echo "Usage: make tunnel-test PORT=4000"; \
+		exit 1; \
+	fi
+	@./scripts/tunnel.sh test $(PORT)
+
+# Restart tunnels
+tunnel-restart: check-socat
+	@./scripts/tunnel.sh restart
