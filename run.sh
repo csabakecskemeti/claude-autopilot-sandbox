@@ -349,6 +349,33 @@ cat > "$METADATA_FILE" << EOF
 }
 EOF
 
+# =============================================================================
+# SHARED FOLDER (Read-Only) - Optional
+# =============================================================================
+
+if [ -n "$SHARE" ]; then
+    # Validate path is absolute
+    if [[ ! "$SHARE" = /* ]]; then
+        echo "ERROR: SHARE must be an absolute path"
+        echo "  Got: $SHARE"
+        exit 1
+    fi
+
+    # Validate path exists and is a directory
+    if [ ! -d "$SHARE" ]; then
+        echo "ERROR: SHARE path does not exist or is not a directory"
+        echo "  Path: $SHARE"
+        exit 1
+    fi
+
+    # Set SHARED_VOLUME for docker-compose (read-only mount to /shared)
+    export SHARED_VOLUME="- ${SHARE}:/shared:ro"
+    echo "✓ Shared folder configured: $SHARE → /shared (read-only)"
+else
+    # Empty comment line - docker-compose will skip it
+    export SHARED_VOLUME="# No shared folder configured"
+fi
+
 echo ""
 echo "=========================================="
 echo "Task: $TASK_FULL_NAME"
@@ -361,6 +388,9 @@ echo "    Worker:     $WORKSPACE_PATH"
 echo "    Task:       $TASK_STORAGE"
 echo "    Supervisor: $SUPERVISOR_WORKSPACES"
 echo "    Metadata:   $METADATA_FILE"
+if [ -n "$SHARE" ]; then
+echo "    Shared:     $SHARE (read-only)"
+fi
 echo ""
 echo "  Ports:"
 echo "    Agent:      $PORT_AGENT_3000, $PORT_AGENT_5000, $PORT_AGENT_8000"
