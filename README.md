@@ -153,6 +153,9 @@ Give the agent read-only access to a local folder:
 # Mount /path/to/code as /shared (read-only) in both agent and supervisor
 SHARE=/path/to/your/code make worker W=analyze TASK="Analyze the codebase in /shared"
 
+# Short form (S= is alias for SHARE=)
+S=/path/to/code make worker W=analyze TASK="..."
+
 # Or set in .env for persistent configuration
 echo 'SHARE=/Users/me/projects/myapp' >> .env
 make worker W=analyze
