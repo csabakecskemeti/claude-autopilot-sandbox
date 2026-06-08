@@ -351,7 +351,13 @@ EOF
 
 # =============================================================================
 # SHARED FOLDER (Read-Only) - Optional
+# Support both SHARE= and S= (short form)
 # =============================================================================
+
+# Use S if SHARE not set (S= is shortcut)
+if [ -z "$SHARE" ] && [ -n "$S" ]; then
+    SHARE="$S"
+fi
 
 if [ -n "$SHARE" ]; then
     # Validate path is absolute
@@ -368,12 +374,23 @@ if [ -n "$SHARE" ]; then
         exit 1
     fi
 
-    # Set SHARED_VOLUME for docker-compose (read-only mount to /shared)
-    export SHARED_VOLUME="- ${SHARE}:/shared:ro"
+    # Create docker-compose override file for shared volume
+    # This is cleaner than trying to use environment variable substitution in arrays
+    cat > docker-compose.override.yml << OVERRIDE_EOF
+services:
+  agent:
+    volumes:
+      - ${SHARE}:/shared:ro
+
+  supervisor:
+    volumes:
+      - ${SHARE}:/shared:ro
+OVERRIDE_EOF
+
     echo "✓ Shared folder configured: $SHARE → /shared (read-only)"
 else
-    # Empty comment line - docker-compose will skip it
-    export SHARED_VOLUME="# No shared folder configured"
+    # Remove override file if it exists
+    rm -f docker-compose.override.yml
 fi
 
 echo ""

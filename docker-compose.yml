@@ -53,9 +53,6 @@ services:
       # Main workspace (worker directory) - agent can write code here
       - ${WORKSPACE_PATH:-./workspaces/default}:/home/worker/workspace
 
-      # Shared folder (read-only access to host files) - optional
-      ${SHARED_VOLUME:-# No shared folder configured}
-
       # =========================================================================
       # MANAGED SETTINGS (highest priority - cannot be overridden)
       # See: docs/CONFIG_HARDENING_MANAGED_SETTINGS.md
@@ -174,8 +171,6 @@ services:
       - ${SUPERVISOR_WORKSPACES:-./workspaces/supervisor}:/supervisor-workspaces
       # Immutable task storage (read-only)
       - ${TASK_STORAGE:-./workspaces/default-task}:/task:ro
-      # Shared folder (read-only access to same host files as agent) - optional
-      ${SHARED_VOLUME:-# No shared folder configured}
 
     # Drop SYS_ADMIN to prevent umount/unshare attacks on RO bind mounts
     cap_drop:
