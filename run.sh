@@ -115,6 +115,14 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # =============================================================================
+# SHARE parameter normalization (S= is shortcut for SHARE=)
+# Do this early so CLAUDE.md generation can reference $SHARE
+# =============================================================================
+if [ -z "$SHARE" ] && [ -n "$S" ]; then
+    SHARE="$S"
+fi
+
+# =============================================================================
 # AUTO-TUNNEL SETUP (macOS only)
 # Automatically create socat tunnels for LAN devices
 # =============================================================================
@@ -278,7 +286,28 @@ generate_user_settings_json "$WORKSPACE_PATH/.claude/user-settings.json"
 
 # Copy CLAUDE.md (mounted read-only in container)
 cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
-echo "Copied CLAUDE.md (will be mounted read-only)"
+
+# Append shared folder info if configured
+if [ -n "$SHARE" ]; then
+    cat >> "$WORKSPACE_PATH/CLAUDE.md" << 'SHARED_EOF'
+
+# Shared Folder (Read-Only Access)
+
+A local folder has been mounted at `/shared` with read-only permissions.
+
+- **Path:** `/shared`
+- **Access:** Read-only (you cannot modify, create, or delete files)
+- **Purpose:** Reference files, documentation, or codebase for analysis
+
+You can read files from `/shared` using normal file operations. Any write attempts will fail with a permission error.
+
+Use `ls /shared` to explore the contents.
+
+SHARED_EOF
+    echo "Copied CLAUDE.md with /shared folder documentation"
+else
+    echo "Copied CLAUDE.md (will be mounted read-only)"
+fi
 
 # Write original task to IMMUTABLE task storage
 if [ -n "$ORIGINAL_TASK" ]; then
@@ -351,13 +380,9 @@ EOF
 
 # =============================================================================
 # SHARED FOLDER (Read-Only) - Optional
-# Support both SHARE= and S= (short form)
+# Validate and create docker-compose override
+# Note: S= to SHARE= normalization happens early in the script
 # =============================================================================
-
-# Use S if SHARE not set (S= is shortcut)
-if [ -z "$SHARE" ] && [ -n "$S" ]; then
-    SHARE="$S"
-fi
 
 if [ -n "$SHARE" ]; then
     # Validate path is absolute
