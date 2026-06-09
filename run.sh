@@ -28,6 +28,14 @@ cd "$SCRIPT_DIR"
 # CONFIG HARDENING: Generate settings.json on host (mounted read-only)
 # This prevents the agent from modifying hooks/settings to bypass guardrails
 # See: docs/CONFIG_HARDENING_PLAN.md
+#
+# PERMISSION NOTES (2026-06-08):
+# - Claude Code v2.1.166 deprecated "allow": ["*"] wildcard syntax
+# - Error: "Wildcard tool name '*' is not supported in allow rules"
+# - Now using "defaultMode": "bypassPermissions" as replacement
+# - deny list still works and takes priority over defaultMode
+# - See: https://github.com/anthropics/claude-code/issues/34923
+# - Old syntax kept commented below for reference
 # =============================================================================
 generate_settings_json() {
     local output_file="$1"
@@ -36,7 +44,8 @@ generate_settings_json() {
     cat > "$output_file" << SETTINGS_EOF
 {
   "permissions": {
-    "allow": ["*"],
+    "_comment": "OLD SYNTAX (pre v2.1.166): 'allow': ['*'] - no longer valid, kept for reference",
+    "defaultMode": "bypassPermissions",
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {
@@ -88,13 +97,18 @@ SETTINGS_EOF
 # This blocks the gap where agent could add env vars or change deny list at user level
 # MUST include skipDangerousModePermissionPrompt to avoid interactive prompt
 # MUST include deny list for local LLM setup (native WebSearch/WebFetch don't work)
+#
+# PERMISSION NOTES (2026-06-08):
+# - Same as above: "allow": ["*"] deprecated in v2.1.166
+# - Using "defaultMode": "bypassPermissions" + deny list instead
 generate_user_settings_json() {
     local output_file="$1"
 
     cat > "$output_file" << 'USER_SETTINGS_EOF'
 {
   "permissions": {
-    "allow": ["*"],
+    "_comment": "OLD SYNTAX (pre v2.1.166): 'allow': ['*'] - no longer valid",
+    "defaultMode": "bypassPermissions",
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {},
