@@ -28,6 +28,14 @@ cd "$SCRIPT_DIR"
 # CONFIG HARDENING: Generate settings.json on host (mounted read-only)
 # This prevents the agent from modifying hooks/settings to bypass guardrails
 # See: docs/CONFIG_HARDENING_PLAN.md
+#
+# PERMISSION NOTES (2026-06-08):
+# - Claude Code v2.1.166 deprecated "allow": ["*"] wildcard syntax
+# - Error: "Wildcard tool name '*' is not supported in allow rules"
+# - Now using "defaultMode": "bypassPermissions" as replacement
+# - deny list still works and takes priority over defaultMode
+# - See: https://github.com/anthropics/claude-code/issues/34923
+# - Old syntax kept commented below for reference
 # =============================================================================
 generate_settings_json() {
     local output_file="$1"
@@ -36,7 +44,8 @@ generate_settings_json() {
     cat > "$output_file" << SETTINGS_EOF
 {
   "permissions": {
-    "allow": ["*"],
+    "_comment": "OLD SYNTAX (pre v2.1.166): 'allow': ['*'] - no longer valid, kept for reference",
+    "defaultMode": "bypassPermissions",
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {
@@ -88,13 +97,18 @@ SETTINGS_EOF
 # This blocks the gap where agent could add env vars or change deny list at user level
 # MUST include skipDangerousModePermissionPrompt to avoid interactive prompt
 # MUST include deny list for local LLM setup (native WebSearch/WebFetch don't work)
+#
+# PERMISSION NOTES (2026-06-08):
+# - Same as above: "allow": ["*"] deprecated in v2.1.166
+# - Using "defaultMode": "bypassPermissions" + deny list instead
 generate_user_settings_json() {
     local output_file="$1"
 
     cat > "$output_file" << 'USER_SETTINGS_EOF'
 {
   "permissions": {
-    "allow": ["*"],
+    "_comment": "OLD SYNTAX (pre v2.1.166): 'allow': ['*'] - no longer valid",
+    "defaultMode": "bypassPermissions",
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]
   },
   "hooks": {},
@@ -112,6 +126,14 @@ if [ -f "$ENV_FILE" ]; then
     source "$ENV_FILE"
     set +a
     echo "Using config: $ENV_FILE"
+fi
+
+# =============================================================================
+# SHARE parameter normalization (S= is shortcut for SHARE=)
+# Do this early so CLAUDE.md generation can reference $SHARE
+# =============================================================================
+if [ -z "$SHARE" ] && [ -n "$S" ]; then
+    SHARE="$S"
 fi
 
 # =============================================================================
@@ -278,7 +300,28 @@ generate_user_settings_json "$WORKSPACE_PATH/.claude/user-settings.json"
 
 # Copy CLAUDE.md (mounted read-only in container)
 cp "./claude-backup/CLAUDE.md" "$WORKSPACE_PATH/CLAUDE.md"
-echo "Copied CLAUDE.md (will be mounted read-only)"
+
+# Append shared folder info if configured
+if [ -n "$SHARE" ]; then
+    cat >> "$WORKSPACE_PATH/CLAUDE.md" << 'SHARED_EOF'
+
+# Shared Folder (Read-Only Access)
+
+A local folder has been mounted at `/shared` with read-only permissions.
+
+- **Path:** `/shared`
+- **Access:** Read-only (you cannot modify, create, or delete files)
+- **Purpose:** Reference files, documentation, or codebase for analysis
+
+You can read files from `/shared` using normal file operations. Any write attempts will fail with a permission error.
+
+Use `ls /shared` to explore the contents.
+
+SHARED_EOF
+    echo "Copied CLAUDE.md with /shared folder documentation"
+else
+    echo "Copied CLAUDE.md (will be mounted read-only)"
+fi
 
 # Write original task to IMMUTABLE task storage
 if [ -n "$ORIGINAL_TASK" ]; then
@@ -349,6 +392,46 @@ cat > "$METADATA_FILE" << EOF
 }
 EOF
 
+# =============================================================================
+# SHARED FOLDER (Read-Only) - Optional
+# Validate and create docker-compose override
+# Note: S= to SHARE= normalization happens early in the script
+# =============================================================================
+
+if [ -n "$SHARE" ]; then
+    # Validate path is absolute
+    if [[ ! "$SHARE" = /* ]]; then
+        echo "ERROR: SHARE must be an absolute path"
+        echo "  Got: $SHARE"
+        exit 1
+    fi
+
+    # Validate path exists and is a directory
+    if [ ! -d "$SHARE" ]; then
+        echo "ERROR: SHARE path does not exist or is not a directory"
+        echo "  Path: $SHARE"
+        exit 1
+    fi
+
+    # Create docker-compose override file for shared volume
+    # This is cleaner than trying to use environment variable substitution in arrays
+    cat > docker-compose.override.yml << OVERRIDE_EOF
+services:
+  agent:
+    volumes:
+      - ${SHARE}:/shared:ro
+
+  supervisor:
+    volumes:
+      - ${SHARE}:/shared:ro
+OVERRIDE_EOF
+
+    echo "✓ Shared folder configured: $SHARE → /shared (read-only)"
+else
+    # Remove override file if it exists
+    rm -f docker-compose.override.yml
+fi
+
 echo ""
 echo "=========================================="
 echo "Task: $TASK_FULL_NAME"
@@ -361,6 +444,9 @@ echo "    Worker:     $WORKSPACE_PATH"
 echo "    Task:       $TASK_STORAGE"
 echo "    Supervisor: $SUPERVISOR_WORKSPACES"
 echo "    Metadata:   $METADATA_FILE"
+if [ -n "$SHARE" ]; then
+echo "    Shared:     $SHARE (read-only)"
+fi
 echo ""
 echo "  Ports:"
 echo "    Agent:      $PORT_AGENT_3000, $PORT_AGENT_5000, $PORT_AGENT_8000"

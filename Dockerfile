@@ -9,6 +9,11 @@ FROM claude-sandbox:latest
 RUN useradd -m -s /bin/bash worker \
     && echo "worker ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
+# Fix Playwright browser permissions for worker user
+# Browsers are pre-installed in base image at /opt/ms-playwright (owned by root)
+# Worker needs write access for lock files, otherwise Claude re-downloads 113MB
+RUN chown -R worker:worker /opt/ms-playwright
+
 # Create directories for Claude data and workspace
 RUN mkdir -p /home/worker/.claude/skills \
     && mkdir -p /home/worker/.claude/agents \
@@ -68,9 +73,14 @@ RUN echo '{\
 # Create user-level settings.json for Claude (base config only)
 # NOTE: MCP servers are configured in ~/.claude.json by init-workspace.sh
 # NOTE: Hooks are configured in PROJECT-LEVEL settings by init-workspace.sh
+#
+# PERMISSION NOTES (2026-06-08):
+# - Claude Code v2.1.166 deprecated "allow": ["*"] wildcard syntax
+# - Now using "defaultMode": "bypassPermissions" as replacement
+# - See: https://code.claude.com/docs/en/changelog (v2.1.166)
 RUN echo '{\
   "permissions": {\
-    "allow": ["*"],\
+    "defaultMode": "bypassPermissions",\
     "deny": ["WebSearch", "WebFetch", "EnterPlanMode", "TodoWrite"]\
   },\
   "skipDangerousModePermissionPrompt": true\
@@ -85,5 +95,9 @@ ENV LLM_MODEL=${LLM_MODEL}
 # Entry point - initialize workspace then run Claude in fully automated mode
 # If ORIGINAL_TASK is set, pass it as positional argument (interactive mode with initial prompt)
 # Without ORIGINAL_TASK, starts interactive mode with empty prompt
-ENTRYPOINT ["/bin/bash", "-c", "~/.claude/scripts/init-workspace.sh && if [ -n \"$ORIGINAL_TASK\" ]; then exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions --allowedTools '*' \"$ORIGINAL_TASK\"; else exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions --allowedTools '*'; fi"]
+#
+# NOTE (2026-06-08): Removed --allowedTools '*' flag - deprecated in Claude Code v2.1.166
+# Permissions now handled via "defaultMode": "bypassPermissions" in settings.json
+# See: https://code.claude.com/docs/en/changelog (v2.1.166)
+ENTRYPOINT ["/bin/bash", "-c", "~/.claude/scripts/init-workspace.sh && if [ -n \"$ORIGINAL_TASK\" ]; then exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions \"$ORIGINAL_TASK\"; else exec claude --model \"$LLM_MODEL\" --dangerously-skip-permissions; fi"]
 CMD []

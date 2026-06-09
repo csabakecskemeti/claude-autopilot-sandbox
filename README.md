@@ -145,6 +145,27 @@ Exact numbers are in **`metadata.json`**.
 LLM_HOST=192.168.1.50 make worker W=proj1 TASK="task 1"
 ```
 
+### Shared folder (read-only access)
+
+Give the agent read-only access to a local folder:
+
+```bash
+# Mount /path/to/code as /shared (read-only) in both agent and supervisor
+SHARE=/path/to/your/code make worker W=analyze TASK="Analyze the codebase in /shared"
+
+# Short form (S= is alias for SHARE=)
+S=/path/to/code make worker W=analyze TASK="..."
+
+# Or set in .env for persistent configuration
+echo 'SHARE=/Users/me/projects/myapp' >> .env
+make worker W=analyze
+```
+
+The shared folder is mounted at `/shared` with read-only permissions in both agent and supervisor containers. Useful for:
+- Analyzing existing codebases without modification risk
+- Accessing reference documentation or datasets
+- Reading configuration files or logs from other projects
+
 ### Alternate env files
 
 ```bash
@@ -226,6 +247,26 @@ make worker W=myproject SEARXNG=1 TASK="…"
 ### LLM unreachable from the container
 
 Use a host IP reachable from Docker. `make setup` documents this.
+
+### macOS: Containers can't reach LAN devices
+
+Docker Desktop on macOS runs in a VM that cannot route to LAN devices (192.168.x.x, *.local). The project includes automatic socat tunnel support:
+
+1. **Install socat** (one-time): `make install-socat`
+2. **Configure .env with actual LAN hostname**:
+   ```bash
+   LLM_HOST=spark-db71.local  # or 192.168.7.103
+   LLM_PORT=4000
+   ```
+3. **Start worker**: `make worker` (tunnels auto-created)
+
+Manual tunnel management:
+- `make tunnel` — Start tunnels based on .env
+- `make tunnel-status` — Show running tunnels
+- `make tunnel-stop` — Stop all tunnels
+- `make tunnel-test PORT=4000` — Test connectivity
+
+See `docs/MACOS_LAN_TUNNEL.md` for details.
 
 ### Ports
 

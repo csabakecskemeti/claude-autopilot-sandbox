@@ -36,3 +36,4 @@ docs/NETWORK_NOTES.md
 docs/SUBAGENT_DELEGATION_RESEARCH.md
 docs/TASK_ISOLATION_PLAN.md
 docs/WEBSEARCH_MIGRATION.md
+docker-compose.override.yml
